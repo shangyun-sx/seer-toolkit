@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>精灵图鉴 - Seer Toolkit</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- 顶部栏 -->
+<header>
+  <h1>🔍 精灵图鉴</h1>
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="输入精灵名称搜索..." autofocus>
+    <button id="searchBtn">搜索</button>
+  </div>
+  <div class="header-info">
+    <span id="totalCount">加载中...</span>
+    <span class="divider">|</span>
+    <a href="https://github.com" target="_blank" class="gh-link">GitHub</a>
+  </div>
+</header>
+
+<!-- 主体 -->
+<main>
+  <!-- 侧边栏 -->
+  <aside>
+    <div class="sidebar-section">
+      <h3>按属性筛选</h3>
+      <div class="type-tags" id="typeTags">
+        <!-- JS 动态填充 -->
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <h3>能力排行</h3>
+      <div class="stat-buttons" id="statButtons">
+        <!-- JS 动态填充 -->
+      </div>
+    </div>
+  </aside>
+
+  <!-- 结果区 -->
+  <section class="content">
+    <!-- 状态栏 -->
+    <div class="result-bar">
+      <span id="resultTitle">欢迎使用精灵图鉴</span>
+      <span id="resultCount"></span>
+    </div>
+
+    <!-- 加载动画 -->
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <p>搜索中...</p>
+    </div>
+
+    <!-- 空状态 -->
+    <div id="emptyState" class="empty-state">
+      <div class="empty-icon">📖</div>
+      <p>输入精灵名称开始搜索</p>
+      <p class="hint">例如: 雷伊、谱尼、小火猴</p>
+    </div>
+
+    <!-- 搜索结果表格 -->
+    <div id="resultTable" class="hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>编号</th>
+            <th>名称</th>
+            <th>属性</th>
+            <th>体力</th>
+            <th>攻击</th>
+            <th>防御</th>
+            <th>特攻</th>
+            <th>特防</th>
+            <th>速度</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- 详情弹窗 -->
+<div id="detailModal" class="modal hidden">
+  <div class="modal-content">
+    <span class="close">&times;</span>
+    <div id="detailContent"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

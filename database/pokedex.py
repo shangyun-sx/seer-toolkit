@@ -46,7 +46,7 @@ class Pokedex:
             db_path = os.path.join(self.data_dir, 'Monster.db')
             if not os.path.exists(db_path):
                 raise FileNotFoundError(f"数据库不存在: {db_path}")
-            self._monster_conn = sqlite3.connect(db_path)
+            self._monster_conn = sqlite3.connect(db_path, check_same_thread=False)
             self._monster_conn.row_factory = sqlite3.Row  # 支持字典式访问
         return self._monster_conn
 
@@ -56,7 +56,7 @@ class Pokedex:
             db_path = os.path.join(self.data_dir, 'Moves.db')
             if not os.path.exists(db_path):
                 raise FileNotFoundError(f"数据库不存在: {db_path}")
-            self._move_conn = sqlite3.connect(db_path)
+            self._move_conn = sqlite3.connect(db_path, check_same_thread=False)
             self._move_conn.row_factory = sqlite3.Row
         return self._move_conn
 
