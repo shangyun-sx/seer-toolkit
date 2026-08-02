@@ -1,0 +1,33 @@
+# 雷小伊游戏数据 —— 绝对不要上传
+data/*.db
+data/version
+data/Data.ini
+Config/
+*.ini
+!requirements.txt
+
+# 图像模板
+识图/
+*.bmp
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# 测试截图
+*.png
+*.jpg
+match_result.png
+
+# 系统文件
+Thumbs.db
+Desktop.ini
