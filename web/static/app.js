@@ -85,10 +85,10 @@ async function loadStatOptions() {
 }
 
 async function loadCommonTypes() {
-  // 赛尔号常见属性
-  const types = ['火', '水', '草', '电', '冰', '战斗', '地面', '飞行',
-                 '超能', '暗影', '龙', '圣灵', '光', '次元', '神秘',
-                 '自然', '混沌', '远古', '邪灵', '机械', '普通'];
+  // 赛尔号单属性（顺序与数据库 Type ID 一致）
+  const types = ['草', '水', '火', '飞行', '电', '机械', '地面',
+                 '普通', '冰', '超能', '战斗', '光', '暗影', '神秘',
+                 '龙', '圣灵', '次元', '远古', '邪灵', '自然', '混沌'];
   typeTags.innerHTML = types.map(t =>
     `<span class="type-tag" data-type="${t}">${t}</span>`
   ).join('');

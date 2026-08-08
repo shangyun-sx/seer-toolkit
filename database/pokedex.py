@@ -24,6 +24,18 @@ _STAT_CN = {
     'SpAtk': '特攻', 'SpDef': '特防', 'Spd': '速度',
 }
 
+# 属性名称 → 数据库 Type ID 映射（仅单属性）
+_TYPE_NAME_TO_ID = {
+    '草': 1, '水': 2, '火': 3, '飞行': 4, '电': 5,
+    '机械': 6, '地面': 7, '普通': 8, '冰': 9, '超能': 10,
+    '战斗': 11, '光': 12, '暗影': 13, '神秘': 14, '龙': 15,
+    '圣灵': 16, '次元': 17, '远古': 18, '邪灵': 19, '自然': 20,
+    '混沌': 222,
+}
+
+# 反向映射：ID → 名称
+_TYPE_ID_TO_NAME = {v: k for k, v in _TYPE_NAME_TO_ID.items()}
+
 
 class Pokedex:
     """赛尔号精灵图鉴"""
@@ -92,12 +104,17 @@ class Pokedex:
         return dict(row) if row else None
 
     def filter_by_type(self, element: str) -> List[Dict]:
-        """按属性筛选 (如 '火', '水', '草')"""
+        """
+        按属性筛选 (如 '火', '水', '草')。
+        支持中文属性名或数字 ID 字符串。
+        """
+        # 将中文属性名转换为数据库中的数字 ID
+        type_id = _TYPE_NAME_TO_ID.get(element, element)
         cur = self.monster_db.execute(
             "SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
-            "FROM monsters WHERE Type LIKE ? "
+            "FROM monsters WHERE Type = ? "
             "ORDER BY ID LIMIT 50",
-            (f'%{element}%',)
+            (str(type_id),)
         )
         return [dict(row) for row in cur.fetchall()]
 
