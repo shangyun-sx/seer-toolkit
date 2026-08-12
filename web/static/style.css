@@ -265,8 +265,6 @@ table {
 }
 
 thead th {
-  position: sticky;
-  top: 73px;
   background: var(--surface);
   padding: 10px 12px;
   text-align: left;
@@ -275,7 +273,6 @@ thead th {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 2px solid var(--border);
-  z-index: 10;
 }
 
 tbody td {
