@@ -86,10 +86,10 @@ class Pokedex:
     # ──────────────────────────────────────────
 
     def search(self, name: str) -> List[Dict]:
-        """按名字模糊搜索精灵"""
+        """按名字模糊搜索精灵（排除皮肤 ID ≥ 15000）"""
         cur = self.monster_db.execute(
             "SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
-            "FROM monsters WHERE DefName LIKE ? "
+            "FROM monsters WHERE DefName LIKE ? AND ID < 15000 "
             "ORDER BY ID LIMIT 20",
             (f'%{name}%',)
         )
@@ -112,7 +112,7 @@ class Pokedex:
         type_id = _TYPE_NAME_TO_ID.get(element, element)
         cur = self.monster_db.execute(
             "SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
-            "FROM monsters WHERE Type = ? "
+            "FROM monsters WHERE Type = ? AND ID < 15000 "
             "ORDER BY ID LIMIT 50",
             (str(type_id),)
         )
@@ -131,14 +131,16 @@ class Pokedex:
         # 使用参数化查询防止注入
         cur = self.monster_db.execute(
             f"SELECT ID, DefName, Type, {stat} "
-            f"FROM monsters ORDER BY {stat} DESC LIMIT ?",
+            f"FROM monsters WHERE ID < 15000 ORDER BY {stat} DESC LIMIT ?",
             (n,)
         )
         return [dict(row) for row in cur.fetchall()]
 
     def count(self) -> int:
-        """获取精灵总数"""
-        cur = self.monster_db.execute("SELECT COUNT(*) as cnt FROM monsters")
+        """获取精灵总数（排除皮肤）"""
+        cur = self.monster_db.execute(
+            "SELECT COUNT(*) as cnt FROM monsters WHERE ID < 15000"
+        )
         return cur.fetchone()['cnt']
 
     def get_moves(self, monster_id: int) -> List[Dict]:
