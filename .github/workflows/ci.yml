@@ -37,11 +37,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      # OpenCV 在 Linux 上依赖系统的 libGL / libglib。缺了的话 import cv2 会直接
+      # 抛 ImportError，而 tests/test_template_match.py 是在模块顶层导入它的，
+      # 于是 pytest 在收集阶段就报 "1 error during collection"（退出码 2），
+      # 一行测试都跑不到。Windows 的 wheel 自带这些库，所以本地复现不出来。
+      - name: 安装系统依赖 (OpenCV 需要 libGL / libglib)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
+
+      # 让"依赖导入不了"变成一个名字明确的失败步骤，而不是伪装成
+      # pytest 的收集错误 —— 那样排查要绕一大圈。
+      - name: 验证依赖可导入
+        run: python -c "import cv2, numpy, fastapi; print('cv2', cv2.__version__)"
+
       - name: 运行测试
         # 只跑离线测试：data/ 里的游戏数据被 .gitignore 排除，CI 上不存在。
         # 需要真实数据的检查项叫 check_real_data，本地用
