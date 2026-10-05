@@ -1,8 +1,8 @@
 """
-测试图像模板匹配。
+测试图像模板匹配（用合成图像，不需要真实截图）。
 
-运行:
-    python tests/test_template_match.py <截图路径> <模板目录>
+运行: python -m pytest tests/test_template_match.py -v
+  或: python tests/test_template_match.py
 """
 
 import os
@@ -58,21 +58,30 @@ def test_find_with_synthetic_image():
 
 
 def test_template_not_found():
-    """测试找不到的情况"""
+    """测试找不到的情况。
+
+    注意：这里**不能**用「全白模板 vs 全黑屏幕」来造「找不到」。
+    TM_CCOEFF_NORMED 是**归一化**互相关，公式里会除以模板的标准差；
+    纯色模板的标准差是 0，分母为 0，OpenCV 会直接给出 1.0 —— 结果变成
+    「处处都匹配」，和直觉正好相反。（旧版 OpenCV 返回 NaN，NaN > 阈值
+    恒为假，所以这个用例以前是「碰巧」过的。）
+
+    所以要用一个**有结构**的模板：标准差非 0，和纯黑屏幕的相关系数才是真的 0。
+    """
     import cv2
 
-    # 全黑图像 vs 全白模板 — 不可能匹配
     screen = np.zeros((200, 200, 3), dtype=np.uint8)
-    white = np.full((50, 50, 3), fill_value=255, dtype=np.uint8)
+    # 固定种子，保证可复现
+    noise = np.random.default_rng(0).integers(0, 255, (50, 50, 3), dtype=np.uint8)
 
     tmpdir = 'temp_test_templates'
     os.makedirs(tmpdir, exist_ok=True)
-    tpl_path = os.path.join(tmpdir, 'white.bmp')
-    cv2.imwrite(tpl_path, white)
+    tpl_path = os.path.join(tmpdir, 'noise.bmp')
+    cv2.imwrite(tpl_path, noise)
 
     try:
         location, score = find_template(screen, tpl_path, threshold=0.9)
-        assert location is None
+        assert location is None, f"不该匹配到，实际位置 {location}、分数 {score}"
         print(f"  ✅ 正确返回 None (相似度: {score:.2%})")
     finally:
         os.unlink(tpl_path)
