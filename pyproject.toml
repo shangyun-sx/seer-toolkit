@@ -1,0 +1,43 @@
+# 只放工具配置，不改打包方式 —— 运行时依赖仍然走 requirements.txt。
+#
+# 这里的规则集是刻意调宽的：目标是「新代码守规矩」，不是「把老代码全改一遍」。
+# 老代码的风格问题（超长行、引号不统一等）不在这轮的范围内。
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+# 游戏数据目录不参与检查
+extend-exclude = ["data", "识图"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes —— 未定义名字、未使用的导入/变量等真问题
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+]
+ignore = [
+    # 行长不强制：现有代码有长行，而且中文字符的实际显示宽度和字符数
+    # 对不上，按字符数卡没有意义
+    "E501",
+]
+# 没有启用 "I"（导入排序）：本项目的入口和测试都用
+# 「先 sys.path.insert 再 import」把项目根目录塞进 sys.path，
+# 这个写法天然违反导入排序规则。要启用就得改掉所有老文件，
+# 和「只加配置、不改老代码」冲突。
+
+[tool.ruff.lint.per-file-ignores]
+# 以下文件早于 ruff 引入，没有做风格清理（避免污染 git blame）。
+# 新代码不要往这里加文件。
+"config/account_manager.py" = ["F401"]
+"config/ini_parser.py" = ["UP015"]
+"database/integrity.py" = ["F841"]
+"main.py" = ["F401", "F541"]
+"vision/auto_click.py" = ["F401", "F541"]
+"vision/template_match.py" = ["F401", "F541"]
+"tests/test_template_match.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 测试是脚本式写法的（同时兼容 pytest），失败时打印更详细
+addopts = "-ra"

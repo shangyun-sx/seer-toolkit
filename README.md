@@ -1,7 +1,8 @@
 # Seer Toolkit
 
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![CI](https://github.com/shangyun-sx/seer-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/shangyun-sx/seer-toolkit/actions/workflows/ci.yml)
 
 一个从零手写的命令行工具，用于管理赛尔号（Seer）游戏本地数据。项目涵盖四个技术方向：**INI 解析**、**SQLite 操作**、**OpenCV 图像模板匹配**、**FastAPI Web 应用**。
 
@@ -13,6 +14,8 @@
 seer-toolkit/
 ├── main.py                    # 入口 -- 交互式命令行菜单
 ├── requirements.txt           # Python 依赖
+├── pyproject.toml             # ruff / pytest 配置 ✨新增
+├── .github/workflows/ci.yml   # CI: 代码检查 + 多版本测试 ✨新增
 ├── .gitignore
 ├── LICENSE
 ├── README.md
@@ -28,13 +31,18 @@ seer-toolkit/
 │   ├── pokedex.py            #   精灵图鉴查询引擎
 │   │                          #   模糊搜索/属性筛选/TopN/跨库关联
 │   │                          #   含 SQL 注入防护
-│   ├── type_chart.py         #   属性克制系统 ✨新增
+│   ├── type_chart.py         #   属性克制系统
 │   │                          #   26 单属性 + 138 属性组合
 │   │                          #   双属性倍率公式计算/弱点抗性查询
+│   ├── effects.py            #   技能效果解析 ✨新增
+│   │                          #   2380 条效果模板 + 35 张参数表
+│   │                          #   渲染成中文描述，0 异常兜底
+│   ├── attributes.py         #   六维属性值对象 ✨新增
+│   │                          #   种族值总和，列顺序单一事实来源
 │   └── integrity.py          #   MD5 数据库完整性校验
 │                               #   含文件名模糊匹配
 │
-├── web/                       # 学习线四: FastAPI Web 应用 ✨新增
+├── web/                       # 学习线四: FastAPI Web 应用
 │   ├── __init__.py
 │   ├── app.py                #   FastAPI 后端 API
 │   └── static/
@@ -47,12 +55,14 @@ seer-toolkit/
 │   ├── template_match.py     #   OpenCV 模板匹配核心
 │   └── auto_click.py         #   自动点击 (截屏->匹配->点击)
 │
-├── tests/                     # 测试
+├── tests/                     # 测试 (全部离线，不需要游戏数据)
 │   ├── __init__.py
-│   ├── test_ini_parser.py    #   6 项测试 (离线)
-│   ├── test_pokedex.py       #   13 项离线 + SQL注入防护 + 可选在线
-│   ├── test_type_chart.py    #   22 项测试 (离线) ✨新增
-│   └── test_template_match.py #  合成图像验证
+│   ├── test_ini_parser.py    #    6 项
+│   ├── test_type_chart.py    #   22 项
+│   ├── test_effects.py       #   27 项 ✨新增
+│   ├── test_attributes.py    #   12 项 ✨新增
+│   ├── test_pokedex.py       #   21 项 + SQL注入防护
+│   └── test_template_match.py #   2 项合成图像
 │
 └── data/                      # 游戏本地数据库 (需自行提供)
                                # 已被 .gitignore 排除，不会上传
@@ -94,6 +104,8 @@ python -m web.app --data-dir /path/to/雷小伊/data  # 直接指向 data 目录
 | 属性克制查询 | `database/type_chart.py` | **否** |
 | 精灵属性弱点 | `database/pokedex.py` | 是 |
 | 技能列表 (含学习等级) | `database/pokedex.py` | 是 |
+| 技能效果描述 | `database/effects.py` | 是 |
+| 种族值总和排名 | `database/attributes.py` | 是 |
 | 校验数据库 MD5 | `database/integrity.py` | 是 |
 | 图像模板匹配 | `vision/template_match.py` | 否 |
 | 自动点击 | `vision/auto_click.py` | 否 |
@@ -140,6 +152,74 @@ TypeChart.with_stab('电', '电', '水')        # 3.0  —— 含本系加成
 `21~132` 是双属性）。所以 `filter_by_type('火')` 会把「火·飞行」这类双属性精灵
 也一并筛出来 —— 这是旧版 `Type = ?` 做不到的。
 
+## 技能效果解析
+
+游戏把技能效果拆成三层，和 SeerAPI 的 `SkillEffectType` / `SkillEffectParam` /
+`SkillEffectInUse` 是一一对应的：
+
+| 数据 | 位置 | 规模 |
+|---|---|---|
+| 效果模板 | `EffectInfo.db` → `Effect.info` | 2380 条 |
+| 参数取值表 | `EffectInfo.db` → `ParamType.params` | 35 类 |
+| 技能挂了哪些效果 | `Moves.db` → `moves.SideEffect` | 25880 / 27307 |
+| 效果的具体参数 | `Moves.db` → `moves.SideEffectArg` | — |
+
+`SideEffect` 是**多个效果的顺序列表**，`SideEffectArg` 是按各自 `argsNum`
+顺序拼接的参数。渲染就是顺序消费 + 模板取值：
+
+```
+钢之爪  SideEffect=4  SideEffectArg='0 20 1'
+  effect4 = '技能使用成功时，{1}%改变自身{0}等级{2}'
+  {0}=0  → 紧跟「自身…等级」，查六维表 → 攻击
+  {1}=20, {2}=1 → 紧跟「等级」是增量，补正号
+  → 技能使用成功时，20%改变自身攻击等级+1
+```
+
+```python
+from database.effects import EffectParser
+
+parser = EffectParser('data')
+parser.render_effect(4, ['0', '100', '1'])   # '技能使用成功时，100%改变自身攻击等级+1'
+parser.describe('4 5 ', '0 100 1 5 15 -1')   # 多条效果用「；」连起来
+```
+
+**参数类型怎么推断**：数据里**没有**「效果 → 参数类型」的映射列，只能从模板措辞
+判断。约 90% 的占位符是纯数字，只有约 10% 需要查表：
+
+| 模板特征 | 判定 |
+|---|---|
+| 后面紧跟「等级」，或「提升…个等级」 | 查六维表 |
+| 前面是「令对方 / 使自身…」，且后面不是数量词 | 查异常状态表 |
+| 其余 | 直接填数字 |
+
+判断顺序必须**先六维、后状态** —— `使自身{2}提升1个等级` 里的 `{2}` 前缀像状态
+（`使自身`）、后缀却是等级，必须判成六维。
+
+**兜底策略**：六维下标越界退回原始数字、状态名查不到原样输出、参数不够显示 `?`、
+未知效果 ID 显示 `[未知效果#N]`。**任何情况都不抛异常** —— 全量 25880 个技能
+实测 0 异常、100% 有输出。
+
+**数据来源**：本地 `EffectInfo.db` 缺了 213 个 id，其中 5 个被技能引用
+（`id=31` 被 303 个技能引用）。这 5 个用 `_SUPPLEMENTAL_EFFECTS` 从
+`https://api.seerapi.com/v1/skill_effect_type/<id>` 补齐 —— 已核对 API 与本地的
+`argsNum` / `info` 在 17 个抽样 id 上逐字节一致，确认是同一版本。
+
+## 六维属性值对象
+
+体力 / 攻击 / 防御 / 特攻 / 特防 / 速度在数据库里是六个独立的列。封成
+`SixAttributes`（`database/attributes.py`）之后，「种族值总和」就有了落点：
+
+```python
+from database.attributes import SixAttributes
+
+attrs = SixAttributes.from_row(行)
+attrs.total          # 种族值总和
+```
+
+`FIELDS` 是列顺序的**单一事实来源** —— 排序用的 SQL 表达式
+（`HP + Atk + Def + SpAtk + SpDef + Spd`）由它拼出来，不手写。
+`top_n('Total')` 就是靠它排序的。
+
 ## 游戏数据库结构备注
 
 在真实的 `雷小伊/data` 上验证过的几个关键点：
@@ -167,27 +247,51 @@ TypeChart.with_stab('电', '电', '水')        # 3.0  —— 含本系加成
 | GET | `/api/monsters/count` | 精灵总数 |
 | GET | `/api/monsters/search?q=雷伊` | 按名称搜索 |
 | GET | `/api/monsters/type?element=火` | 按属性筛选（含双属性） |
-| GET | `/api/monsters/top?stat=HP&n=10` | 能力排名 |
+| GET | `/api/monsters/top?stat=HP&n=10` | 能力排名（`stat` 也可用 `Total` 种族值总和） |
 | GET | `/api/monsters/{id}` | 精灵详情 |
 | GET | `/api/monsters/{id}/moves` | 技能列表（含学习等级/属性/类别） |
-| GET | `/api/monsters/{id}/effectiveness` | 精灵的属性弱点/抗性/免疫 ✨新增 |
-| GET | `/api/types` | 全部单属性 ✨新增 |
-| GET | `/api/types/effectiveness?element=电·火` | 属性克制关系（打击面 + 防守面）✨新增 |
+| GET | `/api/monsters/{id}/effectiveness` | 精灵的属性弱点/抗性/免疫 |
+| GET | `/api/types` | 全部单属性 |
+| GET | `/api/types/effectiveness?element=电·火` | 属性克制关系（打击面 + 防守面） |
 
-> 浏览器打开后，侧边栏「属性克制」下拉框可以直接查任意属性；点开精灵详情也会
-> 显示该精灵的弱点和抗性。
+两个可选的查询参数 ✨新增：
+
+```bash
+# 技能效果描述（默认关，因为要多读一个库）
+curl "/api/monsters/70/moves?effects=true"
+
+# 字段投影：精灵对象有 28 列，只要几列时别全量返回
+curl "/api/monsters/70?fields=ID,DefName,TypeName,Total"
+curl "/api/monsters/search?q=雷伊&fields=DefName,Total"
+```
+
+> 浏览器打开后，侧边栏「属性克制」下拉框可以直接查任意属性；点开精灵详情会显示
+> 该精灵的弱点、抗性，以及每条技能的效果描述。
 
 ## 运行测试
 
 ```bash
-# 不需要外部数据
-python tests/test_ini_parser.py        # 6 项 INI 解析测试
-python tests/test_type_chart.py        # 22 项属性克制测试
-python tests/test_pokedex.py           # 14 项离线测试 (临时造库)
-python tests/test_template_match.py    # 合成图像匹配测试 (需要 opencv)
+# 一行跑全部（90 项，全部离线，不需要游戏数据）
+python -m pytest tests/ -q
 
-# 加上真实游戏数据库再跑一遍图鉴测试
+# 也可以单独跑，每个测试文件都带独立入口
+python tests/test_ini_parser.py        #  6 项 INI 解析
+python tests/test_type_chart.py        # 22 项 属性克制
+python tests/test_effects.py           # 27 项 技能效果解析
+python tests/test_attributes.py        # 12 项 六维属性
+python tests/test_pokedex.py           # 21 项 图鉴 (临时造库)
+python tests/test_template_match.py    #  2 项 合成图像匹配
+
+# 需要真实游戏数据库的检查（data/ 被 gitignore，所以不进 pytest）
 python tests/test_pokedex.py /path/to/雷小伊目录
+python tests/test_effects.py /path/to/雷小伊目录
+```
+
+代码检查：
+
+```bash
+pip install ruff
+ruff check .
 ```
 
 ## 涉及的技术点
@@ -196,14 +300,17 @@ python tests/test_pokedex.py /path/to/雷小伊目录
 - **SQLite 操作**：参数化查询、SQL 注入防护（列名白名单）、跨库关联查询
 - **MD5 校验**：分块哈希计算、文件名模糊匹配
 - **属性克制算法**：单属性查表 + 双属性拆分公式（不可简单相乘）、字典稀疏存储、贪心最长匹配解析属性名
+- **技能效果渲染**：模板占位符替换、从措辞推断参数类型（先六维后状态的判定顺序）、顺序消费参数组、全链路兜底不抛异常
 - **JSON 字段解析**：`Moves` 列是带学习等级的 JSON 数组，需容错解析并兼容旧格式
+- **值对象**：`@dataclass(frozen=True)` 封装六维属性，`FIELDS` 作为列顺序的单一事实来源
 - **OpenCV 模板匹配**：TM_CCOEFF_NORMED 算法、多模板搜索、可视化标注
-- **FastAPI Web 应用**：RESTful API 设计、静态文件服务、前后端分离架构
+- **FastAPI Web 应用**：RESTful API 设计、静态文件服务、字段投影、前后端分离架构
 - **前端开发**：原生 JS SPA、Fetch API、DOM 操作、CSS Grid/Flexbox 响应式布局
+- **工程化**：ruff 静态检查、pytest 离线测试（合成数据库）、GitHub Actions 多版本矩阵
 
 ## 致谢
 
-- [SeerAPI](https://github.com/SeerAPI/seerapi) —— 属性建模思路与属性数据来源
+- [SeerAPI](https://github.com/SeerAPI/seerapi) —— 属性建模思路与属性数据来源；技能效果的数据结构（`SkillEffectType` / `SkillEffectParam`）；六维属性值对象；CLI 字段投影
 - [4399 赛尔号](https://news.4399.com/gonglue/seer/jingyanxinde/825548.html) —— 双属性克制系数公式
 
 ## 许可
