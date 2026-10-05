@@ -3,7 +3,11 @@
 # 但只要将来多出一个非 .db 的文件（json / txt / 图片），整个目录就会
 # 被 git 追踪，反而更容易误传。
 data/
-Config/
+# 这里**不能**写 `Config/` 去忽略游戏的 Config 目录：Windows 上
+# core.ignorecase=true，gitignore 的匹配是不区分大小写的，大写 C 的
+# `Config/` 会把项目自己的 config/ 包一起忽略掉 —— 结果 config/ 三个
+# .py 从未被提交，全新 clone 直接 ModuleNotFoundError（2026-10 CI 事故）。
+# 游戏 Config 目录里的 <QQ>.ini 由下面的 *.ini 覆盖，不会漏传。
 *.ini
 !requirements.txt
 

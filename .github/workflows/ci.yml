@@ -37,10 +37,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # OpenCV 在 Linux 上依赖系统的 libGL / libglib。缺了的话 import cv2 会直接
-      # 抛 ImportError，而 tests/test_template_match.py 是在模块顶层导入它的，
-      # 于是 pytest 在收集阶段就报 "1 error during collection"（退出码 2），
-      # 一行测试都跑不到。Windows 的 wheel 自带这些库，所以本地复现不出来。
+      # 防御性依赖：opencv-python 在 Linux 上一般需要 libGL / libglib，
+      # 缺了 import cv2 会抛 ImportError。成本很低，留着。
+      #
+      # 但要说明白：这一步**不是** 2026-10 那次 CI 失败的原因。那次是
+      # config/ 包被 .gitignore 的 `Config/` 规则误伤、从未提交，导致
+      # ModuleNotFoundError（见 .gitignore 里的说明），和 OpenCV 无关。
       - name: 安装系统依赖 (OpenCV 需要 libGL / libglib)
         run: |
           sudo apt-get update
