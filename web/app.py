@@ -2,7 +2,8 @@
 精灵图鉴 Web 版 —— FastAPI 后端。
 
 启动方式:
-    python -m web.app --data-dir <雷小伊/data 目录>
+    python -m web.app                      # 默认读 ./data
+    python -m web.app --data-dir <目录>     # 指定其它目录
 
 或:
     cd seer-toolkit
@@ -25,6 +26,7 @@ from fastapi.responses import FileResponse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.pokedex import Pokedex, _ALLOWED_STATS, _STAT_CN
+from database.type_chart import ELEMENT_TYPES, TypeChart
 
 # ──────────────────────────────────────────
 #  全局 Pokedex 实例
@@ -84,12 +86,52 @@ def create_app(data_dir: str = None) -> FastAPI:
 
     @app.get("/api/monsters/type")
     async def filter_by_type(
-        element: str = Query(..., min_length=1, description="属性名，如 火/水/草")
+        element: str = Query(..., min_length=1, description="属性名，如 火/水/草/电·火")
     ):
-        """按属性筛选"""
+        """按属性筛选（双属性精灵也能被任一属性筛到）"""
         dex = get_pokedex()
-        results = dex.filter_by_type(element)
+        try:
+            results = dex.filter_by_type(element)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         return {"count": len(results), "element": element, "results": results}
+
+    # ── 属性克制 ──────────────────────────
+
+    @app.get("/api/types")
+    async def list_types():
+        """全部单属性"""
+        return {
+            "count": len(ELEMENT_TYPES),
+            "types": [
+                {"id": tid, "name": cn, "name_en": en}
+                for tid, cn, en in TypeChart.all_types()
+            ],
+        }
+
+    @app.get("/api/types/effectiveness")
+    async def type_effectiveness(
+        element: str = Query(..., min_length=1, description="属性名，如 火 / 电·火")
+    ):
+        """某属性的克制关系（打击面 + 防守面）"""
+        try:
+            label = TypeChart.label(element)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {
+            "element": label,
+            "offense": TypeChart.offense_profile(element),
+            "defense": TypeChart.defense_profile(element),
+        }
+
+    @app.get("/api/monsters/{monster_id}/effectiveness")
+    async def monster_effectiveness(monster_id: int):
+        """某精灵的属性弱点 / 抗性 / 免疫"""
+        dex = get_pokedex()
+        data = dex.get_type_effectiveness(monster_id)
+        if data is None:
+            raise HTTPException(404, f"精灵 #{monster_id} 不存在或没有可识别的属性")
+        return data
 
     @app.get("/api/monsters/top")
     async def top_n(
@@ -146,7 +188,8 @@ if __name__ == "__main__":
     import uvicorn
 
     parser = argparse.ArgumentParser(description="精灵图鉴 Web 版")
-    parser.add_argument("--data-dir", required=True, help="雷小伊 data 目录路径")
+    parser.add_argument("--data-dir", default="data",
+                        help="雷小伊 data 目录路径 (默认 ./data)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址")
     parser.add_argument("--port", type=int, default=8000, help="监听端口")
     parser.add_argument("--reload", action="store_true", help="开发模式热重载")

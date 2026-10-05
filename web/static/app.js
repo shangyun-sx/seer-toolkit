@@ -29,18 +29,25 @@ const statButtons = $('#statButtons');
 const detailModal = $('#detailModal');
 const detailContent = $('#detailContent');
 const closeBtn = $('.close');
+const effectPanel = $('#effectPanel');
+const typeSelect = $('#typeSelect');
+const checkTypeBtn = $('#checkTypeBtn');
 
 // ── 初始化 ──────────────────────────
 async function init() {
   await loadTotalCount();
   await loadStatOptions();
   await loadCommonTypes();
+  await loadTypeOptions();
 
   // 搜索事件
   searchBtn.addEventListener('click', doSearch);
   searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doSearch();
   });
+
+  // 属性克制
+  checkTypeBtn.addEventListener('click', checkType);
 
   // 弹窗关闭
   closeBtn.addEventListener('click', closeModal);
@@ -85,10 +92,16 @@ async function loadStatOptions() {
 }
 
 async function loadCommonTypes() {
-  // 赛尔号单属性（顺序与数据库 Type ID 一致）
-  const types = ['草', '水', '火', '飞行', '电', '机械', '地面',
-                 '普通', '冰', '超能', '战斗', '光', '暗影', '神秘',
-                 '龙', '圣灵', '次元', '远古', '邪灵', '自然', '混沌'];
+  // 属性列表由后端提供（database/type_chart.py），避免前后端各维护一份
+  let types;
+  try {
+    const res = await fetch('/api/types');
+    types = (await res.json()).types.map(t => t.name);
+  } catch (e) {
+    console.error('加载属性列表失败:', e);
+    return;
+  }
+
   typeTags.innerHTML = types.map(t =>
     `<span class="type-tag" data-type="${t}">${t}</span>`
   ).join('');
@@ -101,6 +114,18 @@ async function loadCommonTypes() {
       loadByType(tag.dataset.type);
     });
   });
+}
+
+async function loadTypeOptions() {
+  try {
+    const res = await fetch('/api/types');
+    const data = await res.json();
+    typeSelect.innerHTML = data.types.map(t =>
+      `<option value="${t.name}">${t.name} (${t.name_en})</option>`
+    ).join('');
+  } catch (e) {
+    console.error('加载属性下拉框失败:', e);
+  }
 }
 
 // ── 数据加载 ──────────────────────────
@@ -145,11 +170,75 @@ async function loadTopN(stat, n) {
   }
 }
 
+async function checkType() {
+  const element = typeSelect.value;
+  if (!element) return;
+
+  clearHighlights();
+  showLoading();
+  try {
+    const res = await fetch(`/api/types/effectiveness?element=${encodeURIComponent(element)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || '查询失败');
+    }
+    renderEffectPanel(await res.json());
+  } catch (e) {
+    showError(e.message || '查询失败');
+  }
+}
+
+// ── 属性克制渲染 ──────────────────────────
+
+function renderEffectRows(groups) {
+  return groups.map(([label, rows, cls]) => `
+    <div class="effect-row">
+      <span class="effect-label">${label}</span>
+      <span class="effect-tags">${
+        rows && rows.length
+          ? rows.map(([name, mult]) =>
+              `<span class="type-tag ${cls}">${name} ${mult}x</span>`).join('')
+          : '<span class="effect-none">无</span>'
+      }</span>
+    </div>
+  `).join('');
+}
+
+function renderEffectPanel(data) {
+  hideLoading();
+  emptyState.classList.add('hidden');
+  resultTable.classList.add('hidden');
+
+  resultTitle.textContent = `${data.element} 系属性克制`;
+  resultCount.textContent = '';
+
+  effectPanel.classList.remove('hidden');
+  effectPanel.innerHTML = `
+    <div class="effect-group">
+      <h3>用 ${data.element} 系技能攻击</h3>
+      ${renderEffectRows([
+        ['🔺 克制', data.offense.strong, 'strong'],
+        ['🔹 微弱', data.offense.weak, 'weak'],
+        ['🚫 无效', data.offense.immune, 'immune'],
+      ])}
+    </div>
+    <div class="effect-group">
+      <h3>${data.element} 系精灵受到攻击</h3>
+      ${renderEffectRows([
+        ['🔺 弱点', data.defense.weaknesses, 'strong'],
+        ['🔹 抗性', data.defense.resistances, 'weak'],
+        ['🚫 免疫', data.defense.immunities, 'immune'],
+      ])}
+    </div>
+  `;
+}
+
 // ── 渲染 ──────────────────────────
 
 function renderResults(results, title, count) {
   hideLoading();
   emptyState.classList.add('hidden');
+  effectPanel.classList.add('hidden');
 
   if (!results || results.length === 0) {
     resultTitle.textContent = title;
@@ -168,7 +257,7 @@ function renderResults(results, title, count) {
     <tr onclick="showDetail(${r.ID})" title="点击查看详情">
       <td class="monster-id">#${r.ID}</td>
       <td class="monster-name">${r.DefName || ''}</td>
-      <td>${r.Type || ''}</td>
+      <td>${r.TypeName || r.Type || ''}</td>
       <td>${r.HP ?? '-'}</td>
       <td>${r.Atk ?? '-'}</td>
       <td>${r.Def ?? '-'}</td>
@@ -183,20 +272,22 @@ function renderResults(results, title, count) {
 
 async function showDetail(id) {
   try {
-    const [monRes, moveRes] = await Promise.all([
+    const [monRes, moveRes, effRes] = await Promise.all([
       fetch(`/api/monsters/${id}`),
       fetch(`/api/monsters/${id}/moves`),
+      fetch(`/api/monsters/${id}/effectiveness`),
     ]);
 
     if (!monRes.ok) throw new Error('未找到');
 
     const monster = await monRes.json();
     const moveData = await moveRes.json();
+    const effect = effRes.ok ? await effRes.json() : null;
 
     detailContent.innerHTML = `
       <div class="detail-header">
         <h2>#${monster.ID} ${monster.DefName}</h2>
-        <span class="detail-id">${monster.Type || '未知属性'}</span>
+        <span class="detail-id">${monster.TypeName || monster.Type || '未知属性'}</span>
       </div>
       <div class="detail-stats">
         <div class="stat-item">
@@ -224,6 +315,16 @@ async function showDetail(id) {
           <div class="stat-value">${monster.Spd || '-'}</div>
         </div>
       </div>
+      ${effect ? `
+        <div class="detail-section">
+          <h3>属性克制 (${effect.label}系)</h3>
+          ${renderEffectRows([
+            ['🔺 弱点', effect.weaknesses, 'strong'],
+            ['🔹 抗性', effect.resistances, 'weak'],
+            ['🚫 免疫', effect.immunities, 'immune'],
+          ])}
+        </div>
+      ` : ''}
       ${moveData.moves && moveData.moves.length > 0 ? `
         <div class="detail-section">
           <h3>技能列表 (${moveData.count})</h3>
@@ -232,7 +333,9 @@ async function showDetail(id) {
               <li>
                 <span>
                   <span class="move-name">${m.Name || '?'}</span>
-                  <span style="color:var(--text-dim);font-size:0.75rem"> ${m.Type || ''} ${m.Category || ''}</span>
+                  <span style="color:var(--text-dim);font-size:0.75rem">
+                    ${m.LearningLv != null ? `Lv${m.LearningLv} ` : ''}${m.TypeName || m.Type || ''} ${m.CategoryName || m.Category || ''}
+                  </span>
                 </span>
                 <span class="move-info">
                   威力:${m.Power || '-'} PP:${m.MaxPP || '-'} 命中:${m.Accuracy || '-'}
@@ -260,6 +363,7 @@ function showLoading() {
   loadingEl.classList.remove('hidden');
   resultTable.classList.add('hidden');
   emptyState.classList.add('hidden');
+  effectPanel.classList.add('hidden');
 }
 
 function hideLoading() {
@@ -268,6 +372,7 @@ function hideLoading() {
 
 function showError(msg) {
   hideLoading();
+  effectPanel.classList.add('hidden');
   emptyState.classList.remove('hidden');
   emptyState.querySelector('p').textContent = msg;
 }

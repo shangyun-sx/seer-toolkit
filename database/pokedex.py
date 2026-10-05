@@ -3,14 +3,21 @@
 
 支持:
 - 按名字模糊搜索
-- 按属性筛选
+- 按属性筛选 (含双属性)
 - 按任意能力值排序
 - 查看精灵的技能列表 (跨库关联)
+- 属性克制: 列出精灵的弱点 / 抗性 / 免疫
 """
 
+import json
 import sqlite3
 import os
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional, Tuple
+
+try:
+    from database.type_chart import ELEMENT_TYPES, TypeChart
+except ImportError:  # 直接运行 database/pokedex.py 时
+    from type_chart import ELEMENT_TYPES, TypeChart
 
 
 # 允许排序的列名白名单 —— 防止 SQL 注入
@@ -24,17 +31,17 @@ _STAT_CN = {
     'SpAtk': '特攻', 'SpDef': '特防', 'Spd': '速度',
 }
 
-# 属性名称 → 数据库 Type ID 映射（仅单属性）
-_TYPE_NAME_TO_ID = {
-    '草': 1, '水': 2, '火': 3, '飞行': 4, '电': 5,
-    '机械': 6, '地面': 7, '普通': 8, '冰': 9, '超能': 10,
-    '战斗': 11, '光': 12, '暗影': 13, '神秘': 14, '龙': 15,
-    '圣灵': 16, '次元': 17, '远古': 18, '邪灵': 19, '自然': 20,
-    '混沌': 222,
-}
+# 属性名称 → 单属性 ID 映射（数据统一来自 database/type_chart.py）
+_TYPE_NAME_TO_ID = {cn: tid for tid, (cn, _en) in ELEMENT_TYPES.items()}
 
 # 反向映射：ID → 名称
-_TYPE_ID_TO_NAME = {v: k for k, v in _TYPE_NAME_TO_ID.items()}
+_TYPE_ID_TO_NAME = {tid: cn for tid, (cn, _en) in ELEMENT_TYPES.items()}
+
+# 数据库里可能存放属性的列名
+_TYPE_COLUMNS = ('Type', 'Type2', 'SubType', 'SecondType', 'TypeB')
+
+# 技能类别 (Moves.db 的 Category 列)
+_MOVE_CATEGORY_CN = {1: '物理', 2: '特殊', 4: '属性'}
 
 
 class Pokedex:
@@ -93,7 +100,7 @@ class Pokedex:
             "ORDER BY ID LIMIT 20",
             (f'%{name}%',)
         )
-        return [dict(row) for row in cur.fetchall()]
+        return self._rows(cur.fetchall())
 
     def get_by_id(self, monster_id: int) -> Optional[Dict]:
         """按 ID 精确查询"""
@@ -101,22 +108,28 @@ class Pokedex:
             "SELECT * FROM monsters WHERE ID = ?", (monster_id,)
         )
         row = cur.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        return self._add_type_name(dict(row))
 
-    def filter_by_type(self, element: str) -> List[Dict]:
+    def filter_by_type(self, element: str, limit: int = 50) -> List[Dict]:
         """
-        按属性筛选 (如 '火', '水', '草')。
-        支持中文属性名或数字 ID 字符串。
+        按属性筛选 (如 '火', '水', '草·超能')，双属性精灵也能被自己的
+        任一属性筛出来。支持中文属性名、英文名或数字 ID。
         """
-        # 将中文属性名转换为数据库中的数字 ID
-        type_id = _TYPE_NAME_TO_ID.get(element, element)
+        # 数据库存的是「属性组合 ID」，所以要把所有含该属性的组合都算上
+        combo_ids = TypeChart.combination_ids(element)
+        if not combo_ids:
+            return []
+
+        placeholders = ','.join(['?'] * len(combo_ids))
         cur = self.monster_db.execute(
-            "SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
-            "FROM monsters WHERE Type = ? AND ID < 15000 "
-            "ORDER BY ID LIMIT 50",
-            (str(type_id),)
+            f"SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
+            f"FROM monsters WHERE CAST(Type AS TEXT) IN ({placeholders}) "
+            f"AND ID < 15000 ORDER BY ID LIMIT ?",
+            [str(cid) for cid in combo_ids] + [limit]
         )
-        return [dict(row) for row in cur.fetchall()]
+        return self._rows(cur.fetchall())
 
     def top_n(self, stat: str, n: int = 10) -> List[Dict]:
         """
@@ -134,7 +147,7 @@ class Pokedex:
             f"FROM monsters WHERE ID < 15000 ORDER BY {stat} DESC LIMIT ?",
             (n,)
         )
-        return [dict(row) for row in cur.fetchall()]
+        return self._rows(cur.fetchall())
 
     def count(self) -> int:
         """获取精灵总数（排除皮肤）"""
@@ -143,35 +156,153 @@ class Pokedex:
         )
         return cur.fetchone()['cnt']
 
+    # ──────────────────────────────────────────
+    #  属性克制
+    # ──────────────────────────────────────────
+
+    @staticmethod
+    def types_of(row) -> Tuple[int, ...]:
+        """从一行记录里解析出属性 ID（单属性 1 个 / 双属性 2 个）。
+
+        数据库把属性存成「属性组合 ID」:
+            1 ~ 20 / 221 ~ 226  单属性
+            21 ~ 132            双属性
+        另外也兼容逗号分隔的多个 ID、以及额外的第二属性列。
+        解析不出来的值会被跳过，不会影响其它查询。
+        """
+        try:
+            keys = set(row.keys())
+        except AttributeError:
+            return ()
+
+        ids: List[int] = []
+        for column in _TYPE_COLUMNS:
+            if column not in keys:
+                continue
+            value = row[column]
+            if value in (None, '', 0):
+                continue
+            try:
+                ids.extend(TypeChart.parse_types(value))
+            except (ValueError, TypeError):
+                continue
+
+        return tuple(dict.fromkeys(ids))[:2]
+
+    def get_monster_types(self, monster_id: int) -> Tuple[int, ...]:
+        """精灵的属性 ID 元组"""
+        monster = self.get_by_id(monster_id)
+        return self.types_of(monster) if monster else ()
+
+    def get_type_effectiveness(self, monster_id: int) -> Optional[Dict]:
+        """精灵的属性克制资料: 弱点 / 抗性 / 免疫"""
+        type_ids = self.get_monster_types(monster_id)
+        if not type_ids:
+            return None
+
+        monster = self.get_by_id(monster_id) or {}
+        return {
+            'id': monster_id,
+            'name': monster.get('DefName', ''),
+            'types': list(type_ids),
+            'label': TypeChart.label(type_ids),
+            **TypeChart.defense_profile(type_ids),
+        }
+
+    # ──────────────────────────────────────────
+    #  内部辅助
+    # ──────────────────────────────────────────
+
+    @staticmethod
+    def _add_type_name(data: Dict) -> Dict:
+        """给查询结果补一个可读的 TypeName 字段（如 3 → '火'）"""
+        raw = data.get('Type')
+        try:
+            data['TypeName'] = TypeChart.label(raw) if raw not in (None, '') else ''
+        except (ValueError, TypeError):
+            # 认不出来的属性值就原样显示，不要吞掉整条记录
+            data['TypeName'] = str(raw)
+        return data
+
+    def _rows(self, rows) -> List[Dict]:
+        return [self._add_type_name(dict(row)) for row in rows]
+
+    @staticmethod
+    def parse_move_entries(raw) -> List[Dict]:
+        """解析 monsters.Moves 列。
+
+        现在游戏里的数据是 JSON 数组，带学习等级：
+            [{"ID":10006,"LearningLv":1,"Rec":0,"Tag":0}, ...]
+        老版本可能是逗号分隔的技能 ID：
+            "10006,20006,..."
+
+        对应 SeerAPI 的 SkillInPet（skill + learning_level）。
+        """
+        if raw is None:
+            return []
+        text = str(raw).strip()
+        if not text:
+            return []
+
+        # JSON 数组
+        if text.startswith('['):
+            try:
+                data = json.loads(text)
+            except ValueError:
+                return []
+            entries = []
+            for item in data:
+                if isinstance(item, dict) and item.get('ID') is not None:
+                    entries.append(item)
+                elif isinstance(item, int):
+                    entries.append({'ID': item})
+            return entries
+
+        # 逗号分隔
+        try:
+            return [{'ID': int(x.strip())} for x in text.split(',') if x.strip()]
+        except ValueError:
+            return []
+
     def get_moves(self, monster_id: int) -> List[Dict]:
-        """获取某精灵的技能列表 (跨库查询)"""
+        """获取某精灵的技能列表 (跨库查询)，按学习等级排序。"""
         monster = self.get_by_id(monster_id)
         if not monster:
             return []
 
-        # Moves 字段可能存有技能 ID 列表 (逗号分隔)
-        moves_str = monster.get('Moves', '')
-        if not moves_str:
+        entries = self.parse_move_entries(monster.get('Moves'))
+        if not entries:
             return []
 
-        # 解析技能 ID
-        try:
-            move_ids = [int(x.strip()) for x in moves_str.split(',') if x.strip()]
-        except ValueError:
-            return []
+        # 技能 ID → 学习等级
+        learn_level = {}
+        for entry in entries:
+            learn_level.setdefault(entry['ID'], entry.get('LearningLv'))
+        move_ids = list(learn_level)
 
-        if not move_ids:
-            return []
-
-        # 查询技能详情
         placeholders = ','.join(['?'] * len(move_ids))
         cur = self.move_db.execute(
             f"SELECT ID, Name, Type, Category, Power, MaxPP, Accuracy "
-            f"FROM moves WHERE ID IN ({placeholders}) "
-            f"ORDER BY ID LIMIT 20",
+            f"FROM moves WHERE ID IN ({placeholders})",
             move_ids
         )
-        return [dict(row) for row in cur.fetchall()]
+
+        moves = []
+        for row in cur.fetchall():
+            data = self._add_type_name(dict(row))
+            data['LearningLv'] = learn_level.get(data['ID'])
+            data['CategoryName'] = _MOVE_CATEGORY_CN.get(
+                data.get('Category'), str(data.get('Category') or '')
+            )
+            moves.append(data)
+
+        # 有学习等级的按等级排前面，没有的（特训/额外技能）排后面
+        moves.sort(key=lambda m: (
+            m['LearningLv'] is None,
+            m['LearningLv'] if m['LearningLv'] is not None else 0,
+            m['ID'],
+        ))
+        return moves
 
     # ──────────────────────────────────────────
     #  格式化输出
@@ -182,11 +313,31 @@ class Pokedex:
         print(f"\n{'='*50}")
         print(f"  #{monster.get('ID', '?')}  {monster.get('DefName', '未知')}")
         print(f"{'='*50}")
-        print(f"  属性: {monster.get('Type', '?')}")
+        print(f"  属性: {monster.get('TypeName') or monster.get('Type', '?')}")
         print(f"  体力:{monster.get('HP','?')}  攻击:{monster.get('Atk','?')}"
               f"  防御:{monster.get('Def','?')}")
         print(f"  特攻:{monster.get('SpAtk','?')}  特防:{monster.get('SpDef','?')}"
               f"  速度:{monster.get('Spd','?')}")
+
+    def print_effectiveness(self, monster_id: int) -> None:
+        """打印精灵的属性克制资料"""
+        data = self.get_type_effectiveness(monster_id)
+        if not data:
+            print("  ⚠️ 该精灵没有可识别的属性")
+            return
+
+        print(f"\n{'─'*50}")
+        print(f"  {data['name']} 的属性克制 ({data['label']}系)")
+        print(f"{'─'*50}")
+
+        def render(rows) -> str:
+            if not rows:
+                return "无"
+            return "  ".join(f"{name} {mult:g}x" for name, mult in rows)
+
+        print(f"  🔺 弱点: {render(data['weaknesses'])}")
+        print(f"  🔹 抗性: {render(data['resistances'])}")
+        print(f"  🚫 免疫: {render(data['immunities'])}")
 
     def print_table(self, rows: List[Dict], title: str = "查询结果") -> None:
         """表格形式打印查询结果"""
@@ -197,11 +348,12 @@ class Pokedex:
         print(f"\n{'─'*60}")
         print(f"  {title} (共 {len(rows)} 条)")
         print(f"{'─'*60}")
-        header = f"{'ID':>5}  {'名称':<10} {'属性':<8} {'体力':>4} {'攻击':>4} {'防御':>4} {'特攻':>4} {'特防':>4} {'速度':>4}"
+        header = f"{'ID':>5}  {'名称':<10} {'属性':<10} {'体力':>4} {'攻击':>4} {'防御':>4} {'特攻':>4} {'特防':>4} {'速度':>4}"
         print(header)
         print('-' * 60)
         for r in rows:
-            print(f"{r.get('ID',''):>5}  {r.get('DefName',''):<10} {r.get('Type',''):<8} "
+            type_text = r.get('TypeName') or r.get('Type', '')
+            print(f"{r.get('ID',''):>5}  {r.get('DefName',''):<10} {type_text:<10} "
                   f"{r.get('HP',''):>4} {r.get('Atk',''):>4} {r.get('Def',''):>4} "
                   f"{r.get('SpAtk',''):>4} {r.get('SpDef',''):>4} {r.get('Spd',''):>4}")
 

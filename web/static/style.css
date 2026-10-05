@@ -406,6 +406,90 @@ tbody tr:hover {
   font-size: 0.8rem;
 }
 
+/* ── 属性克制 ─────────────────────── */
+.type-select {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wide-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.wide-btn:hover { background: var(--accent-hover); }
+
+.effect-group {
+  margin-bottom: 24px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.effect-group h3 {
+  font-size: 1rem;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+
+.effect-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.effect-label {
+  flex: 0 0 64px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  padding-top: 4px;
+}
+
+.effect-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.effect-none {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  padding-top: 4px;
+}
+
+/* 克制 / 微弱 / 无效 三种倍率用颜色区分 */
+.type-tag.strong {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.type-tag.weak {
+  border-color: var(--water);
+  color: var(--water);
+}
+
+.type-tag.immune {
+  border-color: var(--text-dim);
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
 /* ── 通用 ─────────────────────── */
 .hidden { display: none !important; }
 

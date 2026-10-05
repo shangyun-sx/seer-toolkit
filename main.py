@@ -23,6 +23,7 @@ from config.ini_parser import IniParser
 from config.account_manager import AccountManager
 from database.pokedex import Pokedex
 from database.integrity import IntegrityChecker
+from database.type_chart import TypeChart
 
 
 class App:
@@ -91,18 +92,81 @@ class App:
                 monster = self.pokedex.get_by_id(mid)
                 if monster:
                     self.pokedex.print_monster(monster)
+                    # 属性克制
+                    self.pokedex.print_effectiveness(mid)
                     # 查询技能
                     moves = self.pokedex.get_moves(mid)
                     if moves:
-                        print(f"\n  技能列表:")
+                        print(f"\n  技能列表 (共 {len(moves)} 个):")
                         for m in moves:
-                            print(f"    {m['Name']} ({m['Type']}) "
-                                  f"威力:{m.get('Power','?')} "
+                            lv = m.get('LearningLv')
+                            lv_text = f"Lv{lv:<3}" if lv is not None else "额外  "
+                            category = m.get('CategoryName') or m.get('Category', '')
+                            type_name = m.get('TypeName') or m.get('Type', '')
+                            print(f"    {lv_text} {m['Name']:<12} {type_name:<4} "
+                                  f"{category:<3} 威力:{m.get('Power','?'):<4} "
                                   f"PP:{m.get('MaxPP','?')}")
                 else:
                     print("  ⚠️ 未找到该编号的精灵")
             except ValueError:
                 print("  ⚠️ 请输入有效编号")
+
+    def type_effectiveness(self):
+        """属性克制查询"""
+        print(f"\n{'─'*50}")
+        print("  属性克制查询")
+        print(f"{'─'*50}")
+        print("  · 输入属性名，如 火 / 电·火 / 圣灵·地面")
+        print("  · 或输入精灵编号，查看该精灵的属性弱点")
+
+        raw = input("\n  请输入 (直接回车返回): ").strip()
+        if not raw:
+            return
+
+        # 纯数字当成精灵编号
+        if raw.isdigit():
+            self.pokedex.print_effectiveness(int(raw))
+            return
+
+        try:
+            label = TypeChart.label(raw)
+        except ValueError as e:
+            print(f"  ⚠️ {e}")
+            return
+
+        offense = TypeChart.offense_profile(raw)
+        defense = TypeChart.defense_profile(raw)
+
+        def render(rows) -> str:
+            return "  ".join(f"{name} {mult:g}x" for name, mult in rows) or "无"
+
+        print(f"\n{'═'*50}")
+        print(f"  【{label}】属性克制")
+        print(f"{'═'*50}")
+        print(f"  ── 用 {label} 系技能攻击 ──")
+        print(f"    🔺 克制: {render(offense['strong'])}")
+        print(f"    🔹 微弱: {render(offense['weak'])}")
+        print(f"    🚫 无效: {render(offense['immune'])}")
+        print(f"\n  ── {label} 系精灵受到攻击 ──")
+        print(f"    🔺 弱点: {render(defense['weaknesses'])}")
+        print(f"    🔹 抗性: {render(defense['resistances'])}")
+        print(f"    🚫 免疫: {render(defense['immunities'])}")
+
+    def list_types(self):
+        """列出全部属性"""
+        types = TypeChart.all_types()
+        print(f"\n{'─'*50}")
+        print(f"  全部属性 (共 {len(types)} 个单属性)")
+        print(f"{'─'*50}")
+
+        row = []
+        for _tid, cn, en in types:
+            row.append(f"{cn}({en})")
+            if len(row) == 4:
+                print("    " + "".join(f"{x:<16}" for x in row))
+                row = []
+        if row:
+            print("    " + "".join(f"{x:<16}" for x in row))
 
     def toggle_task(self):
         """切换任务开关"""
@@ -168,6 +232,8 @@ def main():
         '4': ('切换任务开关', app.toggle_task),
         '5': ('校验数据库 MD5', app.check_integrity),
         '6': ('查看全局配置', app.show_config),
+        '7': ('属性克制查询 (无需数据库)', app.type_effectiveness),
+        '8': ('查看全部属性 (无需数据库)', app.list_types),
         '0': ('退出', None),
     }
 
