@@ -1,7 +1,8 @@
 # 雷小伊游戏数据 —— 绝对不要上传
-data/*.db
-data/version
-data/Data.ini
+# 整个 data/ 目录一起忽略。逐个列举文件名（data/*.db 等）看着精确，
+# 但只要将来多出一个非 .db 的文件（json / txt / 图片），整个目录就会
+# 被 git 追踪，反而更容易误传。
+data/
 Config/
 *.ini
 !requirements.txt
