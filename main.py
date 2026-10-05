@@ -95,7 +95,7 @@ class App:
                     # 属性克制
                     self.pokedex.print_effectiveness(mid)
                     # 查询技能
-                    moves = self.pokedex.get_moves(mid)
+                    moves = self.pokedex.get_moves(mid, with_effects=True)
                     if moves:
                         print(f"\n  技能列表 (共 {len(moves)} 个):")
                         for m in moves:
@@ -106,6 +106,8 @@ class App:
                             print(f"    {lv_text} {m['Name']:<12} {type_name:<4} "
                                   f"{category:<3} 威力:{m.get('Power','?'):<4} "
                                   f"PP:{m.get('MaxPP','?')}")
+                            if m.get('EffectText'):
+                                print(f"         └ {m['EffectText']}")
                 else:
                     print("  ⚠️ 未找到该编号的精灵")
             except ValueError:

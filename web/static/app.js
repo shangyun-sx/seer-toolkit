@@ -264,6 +264,7 @@ function renderResults(results, title, count) {
       <td>${r.SpAtk ?? '-'}</td>
       <td>${r.SpDef ?? '-'}</td>
       <td>${r.Spd ?? '-'}</td>
+      <td>${r.Total ?? '-'}</td>
     </tr>
   `).join('');
 }
@@ -274,7 +275,7 @@ async function showDetail(id) {
   try {
     const [monRes, moveRes, effRes] = await Promise.all([
       fetch(`/api/monsters/${id}`),
-      fetch(`/api/monsters/${id}/moves`),
+      fetch(`/api/monsters/${id}/moves?effects=true`),
       fetch(`/api/monsters/${id}/effectiveness`),
     ]);
 
@@ -331,15 +332,18 @@ async function showDetail(id) {
           <ul class="move-list">
             ${moveData.moves.map(m => `
               <li>
-                <span>
-                  <span class="move-name">${m.Name || '?'}</span>
-                  <span style="color:var(--text-dim);font-size:0.75rem">
-                    ${m.LearningLv != null ? `Lv${m.LearningLv} ` : ''}${m.TypeName || m.Type || ''} ${m.CategoryName || m.Category || ''}
+                <div class="move-row">
+                  <span>
+                    <span class="move-name">${m.Name || '?'}</span>
+                    <span style="color:var(--text-dim);font-size:0.75rem">
+                      ${m.LearningLv != null ? `Lv${m.LearningLv} ` : ''}${m.TypeName || m.Type || ''} ${m.CategoryName || m.Category || ''}
+                    </span>
                   </span>
-                </span>
-                <span class="move-info">
-                  威力:${m.Power || '-'} PP:${m.MaxPP || '-'} 命中:${m.Accuracy || '-'}
-                </span>
+                  <span class="move-info">
+                    威力:${m.Power || '-'} PP:${m.MaxPP || '-'} 命中:${m.Accuracy || '-'}
+                  </span>
+                </div>
+                ${m.EffectText ? `<div class="move-effect">${m.EffectText}</div>` : ''}
               </li>
             `).join('')}
           </ul>

@@ -12,24 +12,34 @@
 import json
 import sqlite3
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 try:
+    from database.attributes import FIELDS, TOTAL_SQL, SixAttributes
     from database.type_chart import ELEMENT_TYPES, TypeChart
 except ImportError:  # 直接运行 database/pokedex.py 时
+    from attributes import FIELDS, TOTAL_SQL, SixAttributes
     from type_chart import ELEMENT_TYPES, TypeChart
+
+if TYPE_CHECKING:
+    from database.effects import EffectParser
 
 
 # 允许排序的列名白名单 —— 防止 SQL 注入
 _ALLOWED_STATS = {'ID', 'DefName', 'Type', 'HP', 'Atk', 'Def',
-                  'SpAtk', 'SpDef', 'Spd', 'Gender', 'IsDark'}
+                  'SpAtk', 'SpDef', 'Spd', 'Gender', 'IsDark', 'Total'}
 
 # 列名中文映射
 _STAT_CN = {
     'ID': '编号', 'DefName': '名称', 'Type': '属性',
     'HP': '体力', 'Atk': '攻击', 'Def': '防御',
     'SpAtk': '特攻', 'SpDef': '特防', 'Spd': '速度',
+    'Total': '种族值总和',
 }
+
+# 不是真实列、需要换成表达式的排序字段。
+# 表达式由 attributes.FIELDS 拼成，不掺任何用户输入
+_SORT_EXPRESSIONS = {'Total': TOTAL_SQL}
 
 # 属性名称 → 单属性 ID 映射（数据统一来自 database/type_chart.py）
 _TYPE_NAME_TO_ID = {cn: tid for tid, (cn, _en) in ELEMENT_TYPES.items()}
@@ -54,6 +64,7 @@ class Pokedex:
         self.data_dir = data_dir
         self._monster_conn: Optional[sqlite3.Connection] = None
         self._move_conn: Optional[sqlite3.Connection] = None
+        self._effects: Optional[EffectParser] = None
 
     # ──────────────────────────────────────────
     #  数据库连接管理
@@ -79,6 +90,16 @@ class Pokedex:
             self._move_conn.row_factory = sqlite3.Row
         return self._move_conn
 
+    @property
+    def effects(self) -> 'EffectParser':
+        """技能效果解析器（惰性创建，随 close() 一起释放）"""
+        if self._effects is None:
+            # 函数内 import：effects 模块不依赖 pokedex，但放这里可以避免
+            # 将来有人加反向依赖时出现循环导入
+            from database.effects import EffectParser
+            self._effects = EffectParser(self.data_dir)
+        return self._effects
+
     def close(self):
         """关闭所有数据库连接"""
         if self._monster_conn:
@@ -87,6 +108,9 @@ class Pokedex:
         if self._move_conn:
             self._move_conn.close()
             self._move_conn = None
+        if self._effects:
+            self._effects.close()
+            self._effects = None
 
     # ──────────────────────────────────────────
     #  查询方法
@@ -134,20 +158,36 @@ class Pokedex:
     def top_n(self, stat: str, n: int = 10) -> List[Dict]:
         """
         按某项能力值排名前 N 的精灵。
-        stat 必须是 _ALLOWED_STATS 中的列名 (白名单校验)。
+        stat 必须是 _ALLOWED_STATS 中的列名或 'Total' (白名单校验)。
         """
         if stat not in _ALLOWED_STATS:
             raise ValueError(
                 f"不允许的排序字段: '{stat}'。"
                 f"可选: {', '.join(_ALLOWED_STATS)}"
             )
+
+        # 六维总是取全，这样每条结果都能算出种族值总和
+        selected = ['ID', 'DefName', 'Type'] + list(FIELDS)
+        if stat not in selected:
+            # 'Total' 不是真实列，换成求和表达式；其它字段就是列名本身。
+            # expression 来自白名单 / 模块常量，不掺用户输入
+            expression = _SORT_EXPRESSIONS.get(stat, stat)
+            selected.append(f'{expression} AS "{stat}"')
+
         # 使用参数化查询防止注入
         cur = self.monster_db.execute(
-            f"SELECT ID, DefName, Type, {stat} "
-            f"FROM monsters WHERE ID < 15000 ORDER BY {stat} DESC LIMIT ?",
+            f"SELECT {', '.join(selected)} "
+            f'FROM monsters WHERE ID < 15000 ORDER BY "{stat}" DESC LIMIT ?',
             (n,)
         )
         return self._rows(cur.fetchall())
+
+    def get_attributes(self, monster_id: int) -> Optional[SixAttributes]:
+        """精灵的六维属性值对象（含种族值总和）"""
+        monster = self.get_by_id(monster_id)
+        if not monster:
+            return None
+        return SixAttributes.from_row(monster)
 
     def count(self) -> int:
         """获取精灵总数（排除皮肤）"""
@@ -215,13 +255,20 @@ class Pokedex:
 
     @staticmethod
     def _add_type_name(data: Dict) -> Dict:
-        """给查询结果补一个可读的 TypeName 字段（如 3 → '火'）"""
+        """给查询结果补可读字段：TypeName（属性名）和 Total（种族值总和）。
+
+        Total 只在六列齐全时才算 —— top_n 可能只取了一部分列，
+        缺列时算出来的和是错的，宁可不给。
+        """
         raw = data.get('Type')
         try:
             data['TypeName'] = TypeChart.label(raw) if raw not in (None, '') else ''
         except (ValueError, TypeError):
             # 认不出来的属性值就原样显示，不要吞掉整条记录
             data['TypeName'] = str(raw)
+
+        if all(column in data for column in FIELDS):
+            data['Total'] = SixAttributes.from_row(data).total
         return data
 
     def _rows(self, rows) -> List[Dict]:
@@ -264,8 +311,13 @@ class Pokedex:
         except ValueError:
             return []
 
-    def get_moves(self, monster_id: int) -> List[Dict]:
-        """获取某精灵的技能列表 (跨库查询)，按学习等级排序。"""
+    def get_moves(self, monster_id: int, with_effects: bool = False) -> List[Dict]:
+        """获取某精灵的技能列表 (跨库查询)，按学习等级排序。
+
+        with_effects=True 时额外挂两个字段：
+            Effects     效果描述列表（一个技能可能有多条效果）
+            EffectText  用「；」连成一行，方便直接显示
+        """
         monster = self.get_by_id(monster_id)
         if not monster:
             return []
@@ -282,7 +334,8 @@ class Pokedex:
 
         placeholders = ','.join(['?'] * len(move_ids))
         cur = self.move_db.execute(
-            f"SELECT ID, Name, Type, Category, Power, MaxPP, Accuracy "
+            f"SELECT ID, Name, Type, Category, Power, MaxPP, Accuracy, "
+            f"SideEffect, SideEffectArg "
             f"FROM moves WHERE ID IN ({placeholders})",
             move_ids
         )
@@ -294,6 +347,14 @@ class Pokedex:
             data['CategoryName'] = _MOVE_CATEGORY_CN.get(
                 data.get('Category'), str(data.get('Category') or '')
             )
+
+            side_effect = data.pop('SideEffect', None)
+            side_effect_arg = data.pop('SideEffectArg', None)
+            if with_effects:
+                texts = self.effects.render_move(side_effect, side_effect_arg)
+                data['Effects'] = texts
+                data['EffectText'] = '；'.join(texts)
+
             moves.append(data)
 
         # 有学习等级的按等级排前面，没有的（特训/额外技能）排后面
@@ -318,6 +379,7 @@ class Pokedex:
               f"  防御:{monster.get('Def','?')}")
         print(f"  特攻:{monster.get('SpAtk','?')}  特防:{monster.get('SpDef','?')}"
               f"  速度:{monster.get('Spd','?')}")
+        print(f"  种族值总和: {SixAttributes.from_row(monster).total}")
 
     def print_effectiveness(self, monster_id: int) -> None:
         """打印精灵的属性克制资料"""
@@ -345,17 +407,19 @@ class Pokedex:
             print(f"\n[{title}] 无结果")
             return
 
-        print(f"\n{'─'*60}")
+        print(f"\n{'─'*68}")
         print(f"  {title} (共 {len(rows)} 条)")
-        print(f"{'─'*60}")
-        header = f"{'ID':>5}  {'名称':<10} {'属性':<10} {'体力':>4} {'攻击':>4} {'防御':>4} {'特攻':>4} {'特防':>4} {'速度':>4}"
+        print(f"{'─'*68}")
+        header = (f"{'ID':>5}  {'名称':<10} {'属性':<10} {'体力':>4} {'攻击':>4} "
+                  f"{'防御':>4} {'特攻':>4} {'特防':>4} {'速度':>4} {'总和':>5}")
         print(header)
-        print('-' * 60)
+        print('-' * 68)
         for r in rows:
             type_text = r.get('TypeName') or r.get('Type', '')
             print(f"{r.get('ID',''):>5}  {r.get('DefName',''):<10} {type_text:<10} "
                   f"{r.get('HP',''):>4} {r.get('Atk',''):>4} {r.get('Def',''):>4} "
-                  f"{r.get('SpAtk',''):>4} {r.get('SpDef',''):>4} {r.get('Spd',''):>4}")
+                  f"{r.get('SpAtk',''):>4} {r.get('SpDef',''):>4} {r.get('Spd',''):>4} "
+                  f"{r.get('Total',''):>5}")
 
 
 # ──────────────────────────────────────────

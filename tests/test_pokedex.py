@@ -39,8 +39,9 @@ _FAKE_MONSTERS = [
 ]
 
 _FAKE_MOVES = [
-    (1, '电光一闪', 5, '物理', 40, 30, 100),
-    (2, '火焰冲击', 3, '特殊', 90, 15, 100),
+    # ID, 名称, Type, Category, Power, MaxPP, Accuracy, SideEffect, SideEffectArg
+    (1, '电光一闪', 5, '物理', 40, 30, 100, '', ''),
+    (2, '火焰冲击', 3, '特殊', 90, 15, 100, '4 ', '0 100 1'),
 ]
 
 # 真实数据里 Moves 是带学习等级的 JSON 数组（对应 SeerAPI 的 SkillInPet）
@@ -66,9 +67,25 @@ def _make_fake_db(data_dir: str) -> None:
     conn = sqlite3.connect(os.path.join(data_dir, 'Moves.db'))
     conn.execute(
         "CREATE TABLE moves (ID INTEGER PRIMARY KEY, Name TEXT, Type INTEGER, "
-        "Category TEXT, Power INTEGER, MaxPP INTEGER, Accuracy INTEGER)"
+        "Category TEXT, Power INTEGER, MaxPP INTEGER, Accuracy INTEGER, "
+        "SideEffect TEXT, SideEffectArg TEXT)"
     )
-    conn.executemany("INSERT INTO moves VALUES (?,?,?,?,?,?,?)", _FAKE_MOVES)
+    conn.executemany("INSERT INTO moves VALUES (?,?,?,?,?,?,?,?,?)", _FAKE_MOVES)
+    conn.commit()
+    conn.close()
+
+    # 技能效果解析需要 EffectInfo.db（只造够用的几行）
+    conn = sqlite3.connect(os.path.join(data_dir, 'EffectInfo.db'))
+    conn.execute('CREATE TABLE Effect (id INTEGER PRIMARY KEY, argsNum INTEGER, '
+                 'info TEXT, param TEXT, analyze TEXT, key TEXT, type INTEGER)')
+    conn.execute('CREATE TABLE ParamType (id INTEGER PRIMARY KEY, params TEXT, desc TEXT)')
+    conn.executemany('INSERT INTO ParamType (id, params) VALUES (?,?)', [
+        (0, '攻击|防御|特攻|特防|速度|命中'),
+        (1, '麻痹|中毒|烧伤'),
+    ])
+    conn.executemany('INSERT INTO Effect (id, argsNum, info) VALUES (?,?,?)', [
+        (4, 3, '技能使用成功时，{1}%改变自身{0}等级{2}'),
+    ])
     conn.commit()
     conn.close()
 
@@ -195,6 +212,32 @@ def test_get_moves(dex):
     assert moves[1]['CategoryName'] == '特殊'   # Category=2
 
 
+@_with_fake_db
+def test_get_moves_with_effects(dex):
+    """with_effects=True 时挂上 Effects / EffectText"""
+    moves = {m['Name']: m for m in dex.get_moves(1, with_effects=True)}
+
+    # 火焰冲击挂了 effect 4
+    fire = moves['火焰冲击']
+    assert fire['Effects'] == ['技能使用成功时，100%改变自身攻击等级+1'], fire['Effects']
+    assert fire['EffectText'] == '技能使用成功时，100%改变自身攻击等级+1'
+
+    # 没有效果的技能是空列表，不是缺字段
+    quick = moves['电光一闪']
+    assert quick['Effects'] == []
+    assert quick['EffectText'] == ''
+
+
+@_with_fake_db
+def test_get_moves_hides_raw_effect_columns(dex):
+    """默认（with_effects=False）不能把原始的 SideEffect 列泄露给调用方"""
+    for move in dex.get_moves(1):
+        assert 'SideEffect' not in move
+        assert 'SideEffectArg' not in move
+        assert 'Effects' not in move
+        assert 'EffectText' not in move
+
+
 def test_parse_move_entries():
     """Moves 列的两种格式都要能解析"""
     # 真实的 JSON 数组格式
@@ -223,6 +266,52 @@ def test_top_n(dex):
 
 
 @_with_fake_db
+def test_top_n_total(dex):
+    """按种族值总和排名（'Total' 不是真实列，走表达式）"""
+    top = dex.top_n('Total', 3)
+    # 雷伊 590 > 草超能怪 580 > 电火兽 575 > 火猴 490
+    assert [r['DefName'] for r in top] == ['雷伊', '草超能怪', '电火兽'], top
+    assert top[0]['Total'] == 590
+    # 皮肤（ID >= 15000）不计入
+    assert all(r['ID'] < 15000 for r in top)
+
+
+@_with_fake_db
+def test_top_n_single_stat_keys_unchanged(dex):
+    """改成取全六列之后，按单项排序的返回键不能变，且顺带能算出总和"""
+    top = dex.top_n('Spd', 2)
+    assert top[0]['DefName'] == '雷伊'
+    assert top[0]['Spd'] == 130      # 原有的键还在
+    assert top[0]['Total'] == 590    # 新增的派生字段
+
+
+@_with_fake_db
+def test_search_rows_have_total(dex):
+    """搜索结果也要带总和"""
+    monkey = dex.search('火猴')[0]
+    assert monkey['Total'] == 490
+
+
+@_with_fake_db
+def test_get_attributes(dex):
+    attrs = dex.get_attributes(1)
+    assert attrs.hp == 70
+    assert attrs.spd == 130
+    assert attrs.total == 590
+    assert dex.get_attributes(99999) is None
+
+
+@_with_fake_db
+def test_total_not_injectable(dex):
+    """'Total' 是白名单里的，但恶意字段仍要被拦下"""
+    try:
+        dex.top_n('Total; DROP TABLE monsters;--')
+        assert False, "应该被拦截"
+    except ValueError:
+        pass
+
+
+@_with_fake_db
 def test_sql_injection_blocked(dex):
     """SQL 注入防护"""
     for bad in ('HP; DROP TABLE monsters;--', '1; DROP TABLE monsters;--'):
@@ -237,8 +326,12 @@ def test_sql_injection_blocked(dex):
 #  在线测试: 需要真实的游戏数据库
 # ──────────────────────────────────────────
 
-def test_real_data(data_dir: str):
-    """用真实的雷小伊数据库跑一遍"""
+def check_real_data(data_dir: str):
+    """用真实的雷小伊数据库跑一遍。
+
+    故意不叫 test_* —— 它需要外部数据目录，pytest 收集到会报
+    「fixture 'data_dir' not found」。用 `python tests/test_pokedex.py <目录>` 跑。
+    """
     dex = Pokedex(data_dir)
     try:
         count = dex.count()
@@ -293,8 +386,15 @@ _OFFLINE_TESTS = [
     test_get_monster_types,
     test_type_effectiveness,
     test_get_moves,
+    test_get_moves_with_effects,
+    test_get_moves_hides_raw_effect_columns,
     test_parse_move_entries,
     test_top_n,
+    test_top_n_total,
+    test_top_n_single_stat_keys_unchanged,
+    test_search_rows_have_total,
+    test_get_attributes,
+    test_total_not_injectable,
     test_sql_injection_blocked,
     test_sql_injection,
 ]
@@ -318,12 +418,12 @@ if __name__ == '__main__':
         data_dir = os.path.join(sys.argv[1], 'data')
         print(f"\n在线测试 ({data_dir}):")
         try:
-            test_real_data(data_dir)
-            print("  ✅ test_real_data")
+            check_real_data(data_dir)
+            print("  ✅ check_real_data")
         except AssertionError as e:
-            print(f"  ❌ test_real_data: {e}")
+            print(f"  ❌ check_real_data: {e}")
         except Exception as e:
-            print(f"  💥 test_real_data: {type(e).__name__}: {e}")
+            print(f"  💥 check_real_data: {type(e).__name__}: {e}")
     else:
         print("(传入雷小伊目录可额外跑在线测试)")
 

@@ -40,6 +40,21 @@ def get_pokedex() -> Pokedex:
     return pokedex
 
 
+def project_fields(data: dict, fields: Optional[str]) -> dict:
+    """只保留调用方要的字段。
+
+    精灵对象有 28 列，全量返回很浪费。用法: /api/monsters/70?fields=ID,DefName,TypeName
+
+    思路来自 SeerAPI 的 cli/output.py（整个文件才 63 行，核心就是这个函数）。
+    """
+    if not fields:
+        return data
+    wanted = {name.strip() for name in fields.split(',') if name.strip()}
+    if not wanted:
+        return data
+    return {key: value for key, value in data.items() if key in wanted}
+
+
 # ──────────────────────────────────────────
 #  FastAPI 应用
 # ──────────────────────────────────────────
@@ -78,10 +93,13 @@ def create_app(data_dir: str = None) -> FastAPI:
         }
 
     @app.get("/api/monsters/search")
-    async def search(q: str = Query(..., min_length=1, description="精灵名称关键词")):
+    async def search(
+        q: str = Query(..., min_length=1, description="精灵名称关键词"),
+        fields: Optional[str] = Query(None, description="逗号分隔的字段名，只返回这些字段"),
+    ):
         """按名称模糊搜索"""
         dex = get_pokedex()
-        results = dex.search(q)
+        results = [project_fields(row, fields) for row in dex.search(q)]
         return {"count": len(results), "results": results}
 
     @app.get("/api/monsters/type")
@@ -146,7 +164,11 @@ def create_app(data_dir: str = None) -> FastAPI:
         return {"count": len(results), "stat": stat, "label": _STAT_CN.get(stat, stat), "results": results}
 
     @app.get("/api/monsters/{monster_id}")
-    async def get_monster(monster_id: int):
+    async def get_monster(
+        monster_id: int,
+        fields: Optional[str] = Query(
+            None, description="逗号分隔的字段名，只返回这些字段，如 ID,DefName,Total"),
+    ):
         """精灵详情"""
         dex = get_pokedex()
         monster = dex.get_by_id(monster_id)
@@ -156,13 +178,16 @@ def create_app(data_dir: str = None) -> FastAPI:
         for key in list(monster.keys()):
             if monster[key] is None:
                 monster[key] = ""
-        return monster
+        return project_fields(monster, fields)
 
     @app.get("/api/monsters/{monster_id}/moves")
-    async def get_moves(monster_id: int):
+    async def get_moves(
+        monster_id: int,
+        effects: bool = Query(False, description="是否解析技能效果描述"),
+    ):
         """精灵技能列表"""
         dex = get_pokedex()
-        moves = dex.get_moves(monster_id)
+        moves = dex.get_moves(monster_id, with_effects=effects)
         return {"monster_id": monster_id, "count": len(moves), "moves": moves}
 
     # ── 静态文件 ──────────────────────────

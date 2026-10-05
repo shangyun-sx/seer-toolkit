@@ -389,12 +389,25 @@ tbody tr:hover {
 }
 
 .move-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 6px 0;
   border-bottom: 1px solid rgba(51, 65, 85, 0.3);
   font-size: 0.85rem;
+}
+
+.move-list li .move-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 技能效果描述，缩进在技能名下方 */
+.move-effect {
+  margin-top: 3px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 .move-name {
