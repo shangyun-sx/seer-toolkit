@@ -9,6 +9,8 @@ const state = {
   currentQuery: '',
   currentStat: 'HP',
   topN: 20,
+  offset: 0,               // 当前页从第几条开始（只对 search / type 有意义）
+  limit: 20,               // 每页条数
 };
 
 // ── DOM 引用 ──────────────────────────
@@ -32,6 +34,11 @@ const closeBtn = $('.close');
 const effectPanel = $('#effectPanel');
 const typeSelect = $('#typeSelect');
 const checkTypeBtn = $('#checkTypeBtn');
+const pager = $('#pager');
+const prevPage = $('#prevPage');
+const nextPage = $('#nextPage');
+const pageInfo = $('#pageInfo');
+const pageSize = $('#pageSize');
 
 // ── 初始化 ──────────────────────────
 async function init() {
@@ -48,6 +55,18 @@ async function init() {
 
   // 属性克制
   checkTypeBtn.addEventListener('click', checkType);
+
+  // 翻页
+  prevPage.addEventListener('click', () => {
+    loadPage(Math.max(0, state.offset - state.limit));
+  });
+  nextPage.addEventListener('click', () => {
+    loadPage(state.offset + state.limit);
+  });
+  pageSize.addEventListener('change', () => {
+    state.limit = Number(pageSize.value);
+    loadPage(0);        // 每页条数变了，回到第一页
+  });
 
   // 弹窗关闭
   closeBtn.addEventListener('click', closeModal);
@@ -107,12 +126,7 @@ async function loadCommonTypes() {
   ).join('');
 
   typeTags.querySelectorAll('.type-tag').forEach(tag => {
-    tag.addEventListener('click', () => {
-      state.currentMode = 'type';
-      state.currentQuery = tag.dataset.type;
-      highlightType();
-      loadByType(tag.dataset.type);
-    });
+    tag.addEventListener('click', () => selectType(tag.dataset.type));
   });
 }
 
@@ -130,33 +144,63 @@ async function loadTypeOptions() {
 
 // ── 数据加载 ──────────────────────────
 
-async function doSearch() {
+/** 拼当前查询的 URL。分页只对「搜索」和「属性筛选」有意义 —— Top N 不分页。 */
+function queryUrl(offset) {
+  const page = `limit=${state.limit}&offset=${offset}`;
+
+  if (state.currentMode === 'search') {
+    return `/api/monsters/search?q=${encodeURIComponent(state.currentQuery)}&${page}`;
+  }
+  if (state.currentMode === 'type') {
+    return `/api/monsters/type?element=${encodeURIComponent(state.currentQuery)}&${page}`;
+  }
+  return null;
+}
+
+function currentTitle() {
+  if (state.currentMode === 'search') return `搜索 "${state.currentQuery}"`;
+  if (state.currentMode === 'type') return `${state.currentQuery}系精灵`;
+  return '';
+}
+
+/**
+ * 加载当前查询里从第 offset 条开始的那一页。
+ *
+ * 搜索和属性筛选都走这里 —— 以前各 fetch 一次、各 render 一次，加翻页就得
+ * 改两处，索性合成一个入口。
+ */
+async function loadPage(offset) {
+  const url = queryUrl(offset);
+  if (!url) return;
+
+  showLoading();
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '加载失败');
+    state.offset = offset;      // 成功了才记页码，失败时维持原样
+    renderResults(data.results, currentTitle(), data);
+  } catch (e) {
+    showError(e.message || '加载失败');
+  }
+}
+
+function doSearch() {
   const q = searchInput.value.trim();
   if (!q) return;
 
   state.currentMode = 'search';
   state.currentQuery = q;
   clearHighlights();
-  showLoading();
-
-  try {
-    const res = await fetch(`/api/monsters/search?q=${encodeURIComponent(q)}`);
-    const data = await res.json();
-    renderResults(data.results, `搜索 "${q}"`, data);
-  } catch (e) {
-    showError('搜索失败，请检查网络连接');
-  }
+  loadPage(0);                  // 新搜索总是从第一页开始
 }
 
-async function loadByType(element) {
-  showLoading();
-  try {
-    const res = await fetch(`/api/monsters/type?element=${encodeURIComponent(element)}`);
-    const data = await res.json();
-    renderResults(data.results, `${element}系精灵`, data);
-  } catch {
-    showError('筛选失败');
-  }
+/** 点侧边栏的属性标签 —— 按属性查精灵的入口 */
+function selectType(element) {
+  state.currentMode = 'type';
+  state.currentQuery = element;
+  highlightType();
+  loadPage(0);
 }
 
 async function loadTopN(stat, n) {
@@ -259,6 +303,29 @@ function formatCount(meta) {
   return shown < total ? `显示 ${shown} / 共 ${total} 条` : `共 ${total} 条`;
 }
 
+/**
+ * 翻页条。只在「搜索 / 属性筛选」且结果多于一页时出现 ——
+ * 能力排行是 Top N，本来就不分页，别给它一个点了没反应的翻页条。
+ */
+function renderPager(meta) {
+  const total = meta.total ?? 0;
+
+  if (state.currentMode === 'top' || total <= state.limit) {
+    pager.classList.add('hidden');
+    return;
+  }
+
+  const page = Math.floor(state.offset / state.limit) + 1;
+  const pages = Math.ceil(total / state.limit);
+  const shown = meta.shown ?? 0;
+
+  pager.classList.remove('hidden');
+  pageInfo.textContent = `第 ${page} / ${pages} 页`;
+  prevPage.disabled = state.offset <= 0;
+  // 这一页之后没有剩余行了就到头了（用 shown 而不是 limit，最后一页可能不满）
+  nextPage.disabled = state.offset + shown >= total;
+}
+
 function renderResults(results, title, meta) {
   hideLoading();
   emptyState.classList.add('hidden');
@@ -268,6 +335,7 @@ function renderResults(results, title, meta) {
     resultTitle.textContent = title;
     resultCount.textContent = '无结果';
     resultTable.classList.add('hidden');
+    pager.classList.add('hidden');
     emptyState.classList.remove('hidden');
     emptyState.querySelector('p').textContent = '没有找到匹配的精灵';
     return;
@@ -276,6 +344,7 @@ function renderResults(results, title, meta) {
   resultTitle.textContent = title;
   resultCount.textContent = formatCount(meta);
   resultTable.classList.remove('hidden');
+  renderPager(meta);
 
   tableBody.innerHTML = results.map(r => `
     <tr onclick="showDetail(${r.ID})" title="点击查看详情">
