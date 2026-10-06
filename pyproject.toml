@@ -61,7 +61,6 @@ ignore = [
 # 新代码不要往这里加文件。
 "config/account_manager.py" = ["F401"]
 "config/ini_parser.py" = ["UP015"]
-"database/integrity.py" = ["F841"]
 "main.py" = ["F401", "F541"]
 "vision/auto_click.py" = ["F401", "F541"]
 "vision/template_match.py" = ["F401", "F541"]

@@ -94,16 +94,26 @@ class IntegrityChecker:
         if os.path.exists(os.path.join(self.data_dir, key)):
             return key
 
-        # 3. 标准化后模糊匹配
+        # 3. 标准化后精确匹配
         file_map = self._build_file_map()
         normalized_key = key.lower()
         if normalized_key in file_map:
             return file_map[normalized_key]
 
-        # 4. 部分匹配：key 是文件名的一部分 (如 mintmark 包含在 mintmarks 中)
-        for norm_name, real_name in file_map.items():
-            if normalized_key in norm_name or norm_name in normalized_key:
-                return real_name
+        # 4. 部分匹配：一方是另一方的子串。这一步**是真的在干活**，别删 ——
+        #      Data.ini 写 Monsters -> 磁盘是 Monster.db（单复数差异）
+        #      Data.ini 写 mintmark -> 磁盘是 MintMarks.db（大小写 + 单复数）
+        #    这两个 key 在第 3 步都匹配不上。
+        #
+        #    但绝不能「撞到第一个就返回」：file_map 的顺序来自 os.listdir，
+        #    同一份数据在不同机器上可能给出不同结果。这里把所有候选收拢起来，
+        #    取名字最接近的（长度差最小，其次按字母序），保证结果确定。
+        candidates = [name for name in file_map
+                      if normalized_key in name or name in normalized_key]
+        if candidates:
+            best = min(candidates,
+                       key=lambda name: (abs(len(name) - len(normalized_key)), name))
+            return file_map[best]
 
         return None
 
@@ -155,7 +165,6 @@ class IntegrityChecker:
         """
         expected = self.get_expected_checksums()
         actual = self.get_actual_checksums()
-        file_map = self._build_file_map()
 
         matched = []
         mismatched = []
@@ -199,29 +208,26 @@ class IntegrityChecker:
                     'status': '哈希不匹配',
                 })
 
-        # 检查磁盘上有但 Data.ini 未登记的文件
-        registered_keys_lower = {k.lower() for k in expected.keys()}
+        # 检查磁盘上有但 Data.ini 未登记的文件。
+        # 先把「每个登记过的 key 映射到哪个文件」算一遍 —— 别在循环里对每个
+        # 文件再遍历一遍所有 key（那是 O(文件数 × key 数)）。
+        registered_files = {self._find_file(k) for k in expected}
+
         for fname in os.listdir(self.data_dir):
             if fname == 'Data.ini':
                 continue
             full_path = os.path.join(self.data_dir, fname)
             if not os.path.isfile(full_path):
                 continue
-            key = os.path.splitext(fname)[0]
-            # 检查是否没有任何 Data.ini key 能匹配到这个文件
-            found = False
-            for reg_key in expected.keys():
-                if self._find_file(reg_key) == fname:
-                    found = True
-                    break
-            if not found:
-                mismatched.append({
-                    'key': key,
-                    'filename': fname,
-                    'expected_md5': None,
-                    'actual_md5': md5_file(full_path),
-                    'status': '未在 Data.ini 中登记',
-                })
+            if fname in registered_files:
+                continue
+            mismatched.append({
+                'key': os.path.splitext(fname)[0],
+                'filename': fname,
+                'expected_md5': None,
+                'actual_md5': md5_file(full_path),
+                'status': '未在 Data.ini 中登记',
+            })
 
         all_ok = len(mismatched) == 0
         return all_ok, matched, mismatched
