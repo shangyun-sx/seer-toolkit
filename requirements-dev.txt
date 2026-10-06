@@ -1,0 +1,6 @@
+# 只跑测试才需要的依赖。运行时不需要这些 —— 别往 requirements.txt 里加。
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+pytest>=7.0
+httpx>=0.24          # fastapi.testclient (TestClient) 依赖它

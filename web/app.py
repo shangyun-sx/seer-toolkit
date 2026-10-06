@@ -5,9 +5,9 @@
     python -m web.app                      # 默认读 ./data
     python -m web.app --data-dir <目录>     # 指定其它目录
 
-或:
-    cd seer-toolkit
+或（工厂模式，reload / 多 worker 用得上）:
     uvicorn web.app:create_app --factory --reload
+    这条没法传参，数据目录用环境变量 SEER_DATA_DIR 指定，默认 ./data
 
 访问: http://127.0.0.1:8000
 """
@@ -15,10 +15,11 @@
 import sys
 import os
 import argparse
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import Depends, FastAPI, Query, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -28,16 +29,28 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.pokedex import Pokedex, _ALLOWED_STATS, _STAT_CN
 from database.type_chart import ELEMENT_TYPES, TypeChart
 
-# ──────────────────────────────────────────
-#  全局 Pokedex 实例
-# ──────────────────────────────────────────
-pokedex: Optional[Pokedex] = None
+#: 没有显式指定数据目录时的默认值
+DEFAULT_DATA_DIR = 'data'
 
 
-def get_pokedex() -> Pokedex:
-    if pokedex is None:
-        raise HTTPException(503, "数据库未加载，请用 --data-dir 指定数据目录")
-    return pokedex
+def resolve_data_dir(data_dir: Optional[str] = None) -> str:
+    """数据目录解析：显式参数 > 环境变量 SEER_DATA_DIR > 默认 ./data。
+
+    环境变量那条是给工厂模式准备的 —— `uvicorn web.app:create_app --factory`
+    没有办法传参数进来。
+    """
+    return data_dir or os.environ.get('SEER_DATA_DIR') or DEFAULT_DATA_DIR
+
+
+def get_pokedex(request: Request) -> Pokedex:
+    """依赖注入：取当前应用自己的 Pokedex。
+
+    以前是模块级全局变量，于是 create_app() 造出来的 app 和全局状态纠缠在
+    一起：只有最后一个 app 的参数真正生效，之前造的 app 也会被带着换库。
+    放到 `app.state` 之后每个 app 自带一份，互不干扰 —— 这也是 web 层能被
+    单独测试的前提（见 tests/test_web_api.py）。
+    """
+    return request.app.state.pokedex
 
 
 def project_fields(data: dict, fields: Optional[str]) -> dict:
@@ -61,29 +74,38 @@ def project_fields(data: dict, fields: Optional[str]) -> dict:
 
 
 def create_app(data_dir: str = None) -> FastAPI:
-    """创建 FastAPI 应用（工厂函数）"""
-    global pokedex
+    """创建 FastAPI 应用（工厂函数）。
 
-    if data_dir:
-        pokedex = Pokedex(data_dir)
+    每次调用都会建一个**独立的** Pokedex 挂在 `app.state` 上，所以同一个
+    进程里可以并存多个读不同数据目录的 app（测试就是这么用的）。
+    """
+    dex = Pokedex(resolve_data_dir(data_dir))
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 关掉 sqlite 连接。桌面客户端会常驻，而在 Windows 上只要还握着
+        # 句柄，数据目录就删不掉、换不了。
+        yield
+        dex.close()
 
     app = FastAPI(
         title="精灵图鉴 Web 版",
         description="基于 SQLite 的赛尔号精灵查询系统",
         version="2.0.0",
+        lifespan=lifespan,
     )
+    app.state.pokedex = dex
 
     # ── API 路由 ──────────────────────────
 
     @app.get("/api/monsters/count")
-    async def get_count():
+    async def get_count(dex: Pokedex = Depends(get_pokedex)):
         """精灵总数"""
-        dex = get_pokedex()
         return {"count": dex.count()}
 
     @app.get("/api/monsters/stats")
     async def get_stats():
-        """获取可用于排序的属性列表"""
+        """获取可用于排序的属性列表（纯静态表，不碰数据库）"""
         return {
             "stats": [
                 {"key": k, "label": v}
@@ -96,18 +118,18 @@ def create_app(data_dir: str = None) -> FastAPI:
     async def search(
         q: str = Query(..., min_length=1, description="精灵名称关键词"),
         fields: Optional[str] = Query(None, description="逗号分隔的字段名，只返回这些字段"),
+        dex: Pokedex = Depends(get_pokedex),
     ):
         """按名称模糊搜索"""
-        dex = get_pokedex()
         results = [project_fields(row, fields) for row in dex.search(q)]
         return {"count": len(results), "results": results}
 
     @app.get("/api/monsters/type")
     async def filter_by_type(
-        element: str = Query(..., min_length=1, description="属性名，如 火/水/草/电·火")
+        element: str = Query(..., min_length=1, description="属性名，如 火/水/草/电·火"),
+        dex: Pokedex = Depends(get_pokedex),
     ):
         """按属性筛选（双属性精灵也能被任一属性筛到）"""
-        dex = get_pokedex()
         try:
             results = dex.filter_by_type(element)
         except ValueError as e:
@@ -118,7 +140,7 @@ def create_app(data_dir: str = None) -> FastAPI:
 
     @app.get("/api/types")
     async def list_types():
-        """全部单属性"""
+        """全部单属性（纯静态表，不碰数据库）"""
         return {
             "count": len(ELEMENT_TYPES),
             "types": [
@@ -143,9 +165,11 @@ def create_app(data_dir: str = None) -> FastAPI:
         }
 
     @app.get("/api/monsters/{monster_id}/effectiveness")
-    async def monster_effectiveness(monster_id: int):
+    async def monster_effectiveness(
+        monster_id: int,
+        dex: Pokedex = Depends(get_pokedex),
+    ):
         """某精灵的属性弱点 / 抗性 / 免疫"""
-        dex = get_pokedex()
         data = dex.get_type_effectiveness(monster_id)
         if data is None:
             raise HTTPException(404, f"精灵 #{monster_id} 不存在或没有可识别的属性")
@@ -155,11 +179,11 @@ def create_app(data_dir: str = None) -> FastAPI:
     async def top_n(
         stat: str = Query(..., description="排序字段"),
         n: int = Query(10, ge=1, le=100, description="返回数量"),
+        dex: Pokedex = Depends(get_pokedex),
     ):
         """按某属性排名"""
         if stat not in _ALLOWED_STATS:
             raise HTTPException(400, f"无效排序字段: {stat}，可选: {', '.join(_ALLOWED_STATS)}")
-        dex = get_pokedex()
         results = dex.top_n(stat, n)
         return {"count": len(results), "stat": stat, "label": _STAT_CN.get(stat, stat), "results": results}
 
@@ -168,9 +192,9 @@ def create_app(data_dir: str = None) -> FastAPI:
         monster_id: int,
         fields: Optional[str] = Query(
             None, description="逗号分隔的字段名，只返回这些字段，如 ID,DefName,Total"),
+        dex: Pokedex = Depends(get_pokedex),
     ):
         """精灵详情"""
-        dex = get_pokedex()
         monster = dex.get_by_id(monster_id)
         if not monster:
             raise HTTPException(404, f"精灵 #{monster_id} 不存在")
@@ -184,9 +208,9 @@ def create_app(data_dir: str = None) -> FastAPI:
     async def get_moves(
         monster_id: int,
         effects: bool = Query(False, description="是否解析技能效果描述"),
+        dex: Pokedex = Depends(get_pokedex),
     ):
         """精灵技能列表"""
-        dex = get_pokedex()
         moves = dex.get_moves(monster_id, with_effects=effects)
         return {"monster_id": monster_id, "count": len(moves), "moves": moves}
 
@@ -213,16 +237,21 @@ if __name__ == "__main__":
     import uvicorn
 
     parser = argparse.ArgumentParser(description="精灵图鉴 Web 版")
-    parser.add_argument("--data-dir", default="data",
-                        help="雷小伊 data 目录路径 (默认 ./data)")
+    parser.add_argument("--data-dir", default=None,
+                        help="雷小伊 data 目录路径 (默认 ./data 或 $SEER_DATA_DIR)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址")
     parser.add_argument("--port", type=int, default=8000, help="监听端口")
     parser.add_argument("--reload", action="store_true", help="开发模式热重载")
     args = parser.parse_args()
 
-    # 初始化全局 Pokedex
-    pokedex = Pokedex(args.data_dir)
-    print(f"✅ 数据库已加载: {pokedex.count()} 只精灵")
-
-    app = create_app()  # data_dir 已通过全局变量注入
-    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+    if args.reload:
+        # reload 要求以 import string 加载应用 —— 传 app 实例的话 uvicorn 会
+        # 把 should_reload 静默降级成 False（这个 --reload 以前就是这么失效的）。
+        # 工厂模式没法传参，所以数据目录走环境变量。
+        os.environ['SEER_DATA_DIR'] = resolve_data_dir(args.data_dir)
+        uvicorn.run("web.app:create_app", factory=True,
+                    host=args.host, port=args.port, reload=True)
+    else:
+        app = create_app(args.data_dir)
+        print(f"✅ 数据库已加载: {app.state.pokedex.count()} 只精灵")
+        uvicorn.run(app, host=args.host, port=args.port)
