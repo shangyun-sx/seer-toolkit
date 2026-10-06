@@ -17,7 +17,7 @@ sqlite 连接的线程管理
 import os
 import sqlite3
 import threading
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 class ThreadLocalConnections:
@@ -37,7 +37,10 @@ class ThreadLocalConnections:
 
     def get(self, filename: str) -> sqlite3.Connection:
         """取当前线程持有的那条连接，没有就新开一条。"""
-        cache: Dict[str, sqlite3.Connection] = getattr(self._local, 'conns', None)
+        # getattr 拿不到时是 None，所以要标成 Optional —— 不标的话 mypy 会
+        # 认为「dict 变量被赋了 None」而报错
+        cache: Optional[Dict[str, sqlite3.Connection]] = getattr(
+            self._local, 'conns', None)
         if cache is None:
             cache = {}
             self._local.conns = cache

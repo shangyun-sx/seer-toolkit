@@ -43,8 +43,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 try:
     from database.connections import ThreadLocalConnections
-except ImportError:  # 直接运行 database/effects.py 时
-    from connections import ThreadLocalConnections
+except ImportError:  # 直接运行 database/effects.py 时（见 pokedex.py 里的同类说明）
+    from connections import ThreadLocalConnections  # type: ignore[import-not-found]
 
 # ──────────────────────────────────────────
 #  常量
@@ -354,7 +354,8 @@ class EffectParser:
 if __name__ == '__main__':
     import sys
 
-    if sys.platform == 'win32':
+    # 见 integrity.py 里同名处理的说明
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
     data_dir = sys.argv[1] if len(sys.argv) > 1 else 'data'

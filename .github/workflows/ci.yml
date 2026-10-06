@@ -19,10 +19,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: 安装 ruff
-        run: python -m pip install ruff
+      - name: 安装检查工具
+        # mypy 要能解析 fastapi / numpy 这些导入，所以先把运行时依赖装上。
+        # mypy 不放 requirements-dev.txt：mypy 2.x 已不支持 Python 3.9，
+        # 而 3.9 还在测试矩阵里，装那儿会让那个 job 挂。
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy
       - name: ruff check
         run: ruff check .
+      - name: mypy 类型检查
+        run: mypy .
       # 前端 400 多行 JS 没有任何测试，这里至少保证它语法是通的
       # （ubuntu 的 runner 自带 node）
       - name: 检查前端 JS 语法
@@ -68,4 +76,6 @@ jobs:
         # 需要真实数据的检查项叫 check_real_data，本地用
         #   python tests/test_pokedex.py <雷小伊目录>
         # 单独运行。
-        run: python -m pytest tests/ -q
+        # 覆盖率门槛配在 pyproject 的 [tool.coverage.report] fail_under 里，
+        # 低于它 pytest 会以非零退出码结束。
+        run: python -m pytest tests/ -q --cov --cov-report=term-missing

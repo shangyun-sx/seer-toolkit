@@ -229,9 +229,14 @@ class IniParser:
         data = self._data
         raw = self._raw_lines or []
 
-        # 先记下原始文件里出现过哪些节，最后靠它判断"哪些节是全新的"
-        seen_sections = {_SECTION_RE.match(line.strip()).group(1).strip()
-                         for line in raw if _SECTION_RE.match(line.strip())}
+        # 先记下原始文件里出现过哪些节，最后靠它判断"哪些节是全新的"。
+        # 写成显式循环而不是集合推导：推导里 if 和元素各调一次 match()，
+        # 静态检查没法把两者关联起来（会认为 group() 可能作用在 None 上）。
+        seen_sections: Set[str] = set()
+        for raw_line in raw:
+            match = _SECTION_RE.match(raw_line.strip())
+            if match:
+                seen_sections.add(match.group(1).strip())
 
         out: List[str] = []
         written: Set[Tuple[str, str]] = set()
@@ -258,14 +263,14 @@ class IniParser:
             kv_match = _KV_RE.match(stripped)
             if kv_match and current is not None:
                 key = kv_match.group(1).strip()
-                section = data[current]
-                if key not in section:
+                entries = data[current]      # 别叫 section —— 下面那个循环变量才叫 section
+                if key not in entries:
                     continue  # 这个键被 remove_key 了
                 written.add((current, key))
-                if section[key] == kv_match.group(2).strip():
+                if entries[key] == kv_match.group(2).strip():
                     out.append(line)                # 值没变，原样保留
                 else:
-                    out.append(f'{key}={section[key]}')
+                    out.append(f'{key}={entries[key]}')
                 continue
 
             out.append(line)  # 注释 / 空行 / 认不出的行 -> 原样保留

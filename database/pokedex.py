@@ -19,9 +19,11 @@ try:
     from database.connections import ThreadLocalConnections
     from database.type_chart import ELEMENT_TYPES, TypeChart
 except ImportError:  # 直接运行 database/pokedex.py 时
-    from attributes import FIELDS, TOTAL_SQL, SixAttributes
-    from connections import ThreadLocalConnections
-    from type_chart import ELEMENT_TYPES, TypeChart
+    # 这条路只在「python database/pokedex.py」时走：那时 database/ 自己在
+    # sys.path 上，所以这些是顶层模块名。静态分析找不到它们，忽略即可。
+    from attributes import FIELDS, TOTAL_SQL, SixAttributes  # type: ignore[import-not-found]
+    from connections import ThreadLocalConnections  # type: ignore[import-not-found]
+    from type_chart import ELEMENT_TYPES, TypeChart  # type: ignore[import-not-found]
 
 if TYPE_CHECKING:
     from database.effects import EffectParser
@@ -356,8 +358,8 @@ class Pokedex:
         if not entries:
             return []
 
-        # 技能 ID → 学习等级
-        learn_level = {}
+        # 技能 ID → 学习等级。没有学习等级的（特训 / 额外技能）是 None
+        learn_level: Dict[int, Optional[int]] = {}
         for entry in entries:
             learn_level.setdefault(entry['ID'], entry.get('LearningLv'))
         move_ids = list(learn_level)
@@ -373,10 +375,14 @@ class Pokedex:
         moves = []
         for row in cur.fetchall():
             data = self._add_type_name(dict(row))
-            data['LearningLv'] = learn_level.get(data['ID'])
-            data['CategoryName'] = _MOVE_CATEGORY_CN.get(
-                data.get('Category'), str(data.get('Category') or '')
-            )
+            data['LearningLv'] = learn_level.get(int(data['ID']))
+            # 类别 ID 是 1/2/4。data 是 sqlite 行转来的动态字典，取出来的
+            # 值类型是「任意」，直接喂给 Dict[int, str].get() 会被类型检查
+            # 拦下 —— 而且真拿到非整数时也确实该走原样显示那条路。
+            category = data.get('Category')
+            fallback = str(category or '')
+            data['CategoryName'] = (_MOVE_CATEGORY_CN.get(category, fallback)
+                                    if isinstance(category, int) else fallback)
 
             side_effect = data.pop('SideEffect', None)
             side_effect_arg = data.pop('SideEffectArg', None)

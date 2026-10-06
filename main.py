@@ -17,8 +17,10 @@ import sys
 import os
 from typing import Optional
 
-# Windows GBK 终端下强制 UTF-8 输出
-if sys.platform == 'win32':
+# Windows GBK 终端下强制 UTF-8 输出。
+# hasattr 不只是给 mypy 看的：stdout 被换成别的对象时（重定向、被测试框架
+# 接管）很多实现没有 reconfigure，硬调会 AttributeError。
+if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # 将项目根目录加入 Python 路径

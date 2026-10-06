@@ -15,7 +15,9 @@ import sys
 from typing import Dict, List, Tuple, Optional
 from config.ini_parser import IniParser
 
-if sys.platform == 'win32':
+# hasattr 这一层不只是给 mypy 看的：stdout 被换成别的对象时（重定向、
+# 被测试框架接管）很多实现没有 reconfigure，硬调会 AttributeError
+if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 

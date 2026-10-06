@@ -70,3 +70,45 @@ ignore = [
 testpaths = ["tests"]
 # 测试是脚本式写法的（同时兼容 pytest），失败时打印更详细
 addopts = "-ra"
+
+[tool.mypy]
+# 注意：mypy 已经不接受 3.9 了（3.9 已 EOL），所以这里只能写 3.10 —— 而 CI
+# 还在测 3.9，两边对不齐。3.9 的兼容性目前只由 CI 的测试 job 兜着。
+# 这个不一致是清单里 F12 的一部分，留着统一处理。
+python_version = "3.10"
+show_error_codes = true
+# 老代码里 `def f(x: str = None)` 这种隐式 Optional 写法很多，逐个改会淹没
+# git blame。这条关掉对新代码影响很小 —— 想严格的自己写 Optional 表态。
+no_implicit_optional = false
+# 为了支持「直接 python database/pokedex.py 跑单文件」，这些模块里写了
+# try/except 双份 import，mypy 会判成「重复定义」。那是刻意的写法。
+disable_error_code = ["no-redef"]
+
+[[tool.mypy.overrides]]
+# 以下几处早于 mypy 引入，没做类型清理（和 ruff 的 per-file-ignores 一个理由：
+# 避免污染 git blame）。**新代码不要往这个列表里加模块。**
+module = [
+    "config.account_manager",
+    "database.attributes",
+    "database.type_chart",
+    "vision.auto_click",
+    "vision.template_match",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# 测试的正确性由「跑起来」保证，不靠静态检查；而且每个测试文件都有一模一样的
+# win32 终端处理（sys.stdout.reconfigure），检查了只会刷屏。
+module = ["tests.*"]
+ignore_errors = true
+
+[tool.coverage.run]
+# main.py 是脚本，也一样算进来；vision/ 是自动点击那条线，不在这里
+source = ["cli", "config", "database", "web", "main"]
+
+[tool.coverage.report]
+# 本机（Windows）测出来 85%。CI 跑在 Linux 上 —— 那些
+# `if sys.platform == 'win32'` 分支的代码体在 Linux 走不到，会低一两个点。
+# 所以门槛定 80，留余量：它拦的是「明显掉了」，不是「差一行」。
+fail_under = 80
+show_missing = true

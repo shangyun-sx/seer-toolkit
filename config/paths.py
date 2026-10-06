@@ -65,13 +65,13 @@ def user_data_dir() -> Path:
 
     app = 'seer-toolkit'
     if sys.platform == 'win32':
-        base = os.environ.get('LOCALAPPDATA')
-        base = Path(base) if base else Path.home() / 'AppData' / 'Local'
+        local = os.environ.get('LOCALAPPDATA')
+        base = Path(local) if local else Path.home() / 'AppData' / 'Local'
     elif sys.platform == 'darwin':
         base = Path.home() / 'Library' / 'Application Support'
     else:
-        base = os.environ.get('XDG_DATA_HOME')
-        base = Path(base) if base else Path.home() / '.local' / 'share'
+        xdg = os.environ.get('XDG_DATA_HOME')
+        base = Path(xdg) if xdg else Path.home() / '.local' / 'share'
     return base / app
 
 

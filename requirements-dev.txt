@@ -3,4 +3,7 @@
 #   pip install -r requirements.txt -r requirements-dev.txt
 #
 pytest>=7.0
+pytest-cov>=5.0      # 覆盖率
 httpx>=0.24          # fastapi.testclient (TestClient) 依赖它
+# mypy 不在这里 —— 它跑在 lint job 上（那边是 3.12）。装在这个文件里会拖累
+# 测试矩阵：mypy 2.x 已经不支持 Python 3.9 了，而 3.9 还在测试矩阵里。
