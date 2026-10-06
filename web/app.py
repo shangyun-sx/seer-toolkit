@@ -18,6 +18,17 @@ import argparse
 from contextlib import asynccontextmanager
 from typing import Optional
 
+# Windows 下把 stdout / stderr 都改成 UTF-8，理由和 main.py 里那段一样：
+#   * 完全不改 —— 输出被重定向或走管道时 Python 退回 GBK，下面那句带 ✅ 的
+#     启动提示会直接 UnicodeEncodeError，`python -m web.app > log.txt` 就崩
+#   * 只改 stdout —— `2>&1` 会把 UTF-8 和 GBK 混进同一个流
+# hasattr 是运行时守卫，不只是为了过类型检查：stdout 被换成没有 reconfigure
+# 的对象时（被测试框架接管）硬调会 AttributeError。
+if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.platform == 'win32' and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 from fastapi import Depends, FastAPI, Query, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse

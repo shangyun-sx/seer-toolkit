@@ -4,7 +4,9 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![CI](https://github.com/shangyun-sx/seer-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/shangyun-sx/seer-toolkit/actions/workflows/ci.yml)
 
-一个从零手写的命令行工具，用于管理赛尔号（Seer）游戏本地数据。项目涵盖四个技术方向：**INI 解析**、**SQLite 操作**、**OpenCV 图像模板匹配**、**FastAPI Web 应用**。
+一个从零手写的赛尔号（Seer）本地数据工具：交互式命令行菜单 + 非交互子命令 +
+Web 图鉴，也可以当作库引用。项目涵盖四个技术方向：**INI 解析**、**SQLite 操作**、
+**OpenCV 图像模板匹配**、**FastAPI Web 应用**。
 
 > 这是一个学习项目，代码从零编写，不依赖游戏客户端本身。
 
@@ -12,57 +14,66 @@
 
 ```
 seer-toolkit/
-├── main.py                    # 入口 -- 交互式命令行菜单
-├── requirements.txt           # Python 依赖
-├── pyproject.toml             # ruff / pytest 配置 ✨新增
-├── .github/workflows/ci.yml   # CI: 代码检查 + 多版本测试 ✨新增
+├── main.py                    # 入口：交互式菜单 + 非交互子命令
+├── requirements.txt           # 运行时依赖
+├── requirements-dev.txt       # 测试依赖（pytest / pytest-cov / httpx）
+├── pyproject.toml             # 打包元数据 + ruff / mypy / pytest / 覆盖率配置
+├── .github/workflows/ci.yml   # CI: ruff + mypy + JS 语法 + 5 个 Python 版本的测试与覆盖率
 ├── .gitignore
 ├── LICENSE
 ├── README.md
 │
-├── config/                    # 学习线一: INI 配置解析
-│   ├── __init__.py
-│   ├── ini_parser.py         #   手写 INI 解析器 (~220 行)
-│   │                          #   支持多编码/增删改查/保持顺序
-│   └── account_manager.py    #   账号与任务配置管理
+├── cli/                       # 命令行输出层（不查数据库，只管排版）
+│   ├── render.py             #   表格 / 精灵详情 / 克制面 / 技能列表 → 字符串
+│   └── commands.py           #   非交互子命令（search / top / --json …）
+│
+├── config/                    # 学习线一: INI 配置解析 + 应用自身配置
+│   ├── ini_parser.py         #   手写 INI 解析器
+│   │                          #   多编码 / 增删改查 / 写回时保留注释与空行
+│   ├── account_manager.py    #   账号与任务配置管理
+│   ├── paths.py              #   路径解析（打包成 exe 后也能定位资源与数据目录）
+│   ├── version.py            #   版本号的单一来源
+│   └── logsetup.py           #   日志配置（诊断信息走 stderr）
 │
 ├── database/                  # 学习线二: SQLite 数据库
-│   ├── __init__.py
 │   ├── pokedex.py            #   精灵图鉴查询引擎
-│   │                          #   模糊搜索/属性筛选/TopN/跨库关联
+│   │                          #   搜索 / 属性筛选 / TopN / 分页 / 跨库关联
 │   │                          #   含 SQL 注入防护
 │   ├── type_chart.py         #   属性克制系统
 │   │                          #   26 单属性 + 138 属性组合
-│   │                          #   双属性倍率公式计算/弱点抗性查询
-│   ├── effects.py            #   技能效果解析 ✨新增
+│   │                          #   双属性倍率公式计算 / 弱点抗性查询
+│   ├── effects.py            #   技能效果解析
 │   │                          #   2380 条效果模板 + 35 张参数表
 │   │                          #   渲染成中文描述，0 异常兜底
-│   ├── attributes.py         #   六维属性值对象 ✨新增
+│   ├── attributes.py         #   六维属性值对象
 │   │                          #   种族值总和，列顺序单一事实来源
-│   └── integrity.py          #   MD5 数据库完整性校验
-│                               #   含文件名模糊匹配
+│   ├── connections.py        #   sqlite 连接管理（每线程一条，见「并发」一节）
+│   └── integrity.py          #   MD5 数据库完整性校验（含文件名模糊匹配）
 │
 ├── web/                       # 学习线四: FastAPI Web 应用
-│   ├── __init__.py
-│   ├── app.py                #   FastAPI 后端 API
+│   ├── app.py                #   FastAPI 后端（工厂函数 + 依赖注入）
 │   └── static/
 │       ├── index.html        #   前端页面
 │       ├── style.css         #   深色主题 UI
 │       └── app.js            #   原生 JS 前端逻辑
 │
 ├── vision/                    # 学习线三: 图像模板匹配
-│   ├── __init__.py
 │   ├── template_match.py     #   OpenCV 模板匹配核心
 │   └── auto_click.py         #   自动点击 (截屏->匹配->点击)
 │
-├── tests/                     # 测试 (全部离线，不需要游戏数据)
-│   ├── __init__.py
-│   ├── test_ini_parser.py    #    6 项
-│   ├── test_type_chart.py    #   22 项
-│   ├── test_effects.py       #   27 项 ✨新增
-│   ├── test_attributes.py    #   12 项 ✨新增
-│   ├── test_pokedex.py       #   21 项 + SQL注入防护
-│   └── test_template_match.py #   2 项合成图像
+├── tests/                     # 测试（169 项，全部离线，不需要游戏数据）
+│   ├── test_pokedex.py       #   28 项  图鉴（含并发、分页、SQL 注入）
+│   ├── test_effects.py       #   27 项  技能效果解析
+│   ├── test_type_chart.py    #   22 项  属性克制
+│   ├── test_commands.py      #   16 项  子命令与日志
+│   ├── test_ini_parser.py    #   14 项  INI 解析（含写回保留注释）
+│   ├── test_paths.py         #   12 项  路径解析（含伪装成打包环境）
+│   ├── test_attributes.py    #   12 项  六维属性
+│   ├── test_account_manager.py # 11 项 账号与任务
+│   ├── test_web_api.py       #   10 项  Web API
+│   ├── test_render.py        #    9 项  命令行排版
+│   ├── test_integrity.py     #    6 项  MD5 校验
+│   └── test_template_match.py #   2 项  合成图像匹配
 │
 └── data/                      # 游戏本地数据库 (需自行提供)
                                # 已被 .gitignore 排除，不会上传
@@ -86,11 +97,56 @@ python -m web.app
 # 然后打开 http://127.0.0.1:8000
 ```
 
-数据放在别处时，用 `--data-dir` 指定：
+### 数据目录
+
+**本项目说的「数据目录」一律指含 `Monster.db` 的那个目录**（即雷小伊的
+`<根>/data`）。雷小伊根目录是另一回事 —— 账号和任务配置在那儿，用
+`--game-dir` 指定，只有账号相关的功能才需要。
+
+解析顺序（由 `config/paths.py` 统一负责，过去各入口各写一份、含义还不一致）：
+
+1. `--data-dir` 给的 —— **会被记住**，下次不用再输
+2. 环境变量 `SEER_DATA_DIR`
+3. 上次记住的目录（存在 `%LOCALAPPDATA%\seer-toolkit\config.json`）
+4. 兜底：打包运行时取 exe 同级的 `data/`；源码运行时取 `./data`
 
 ```bash
-python main.py --data-dir /path/to/雷小伊          # 会自动接 /data
-python -m web.app --data-dir /path/to/雷小伊/data  # 直接指向 data 目录
+python main.py --data-dir /path/to/雷小伊/data   # 含 Monster.db 的那个目录
+python main.py --game-dir /path/to/雷小伊        # 只有账号/任务功能需要它
+python -m web.app --data-dir /path/to/雷小伊/data
+```
+
+### 非交互用法
+
+不给子命令时进交互式菜单；给了就执行一次然后退出，因此能接进脚本：
+
+```bash
+python main.py search 雷伊 --limit 5     # 人看的表格
+python main.py search 雷伊 --json        # 机器读的 JSON
+python main.py by-type 火 --json
+python main.py top Total -n 10
+python main.py effectiveness 电·火
+python main.py integrity --json          # 有异常项时退出码非 0
+```
+
+诊断信息走 **stderr**、查询结果走 **stdout** —— 所以 `--json | jq` 不会被
+日志行污染。
+
+### 当作库来用
+
+项目本身是可安装的包，`database/` 那层与界面无关，可以单独引用：
+
+```bash
+pip install -e .
+```
+
+```python
+from database.pokedex import Pokedex
+from database.type_chart import TypeChart
+
+dex = Pokedex('data')
+print(dex.count(), TypeChart.multiplier('圣灵·地面', '电·火'))
+dex.close()
 ```
 
 ## 功能列表
@@ -245,8 +301,8 @@ attrs.total          # 种族值总和
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/monsters/count` | 精灵总数 |
-| GET | `/api/monsters/search?q=雷伊` | 按名称搜索 |
-| GET | `/api/monsters/type?element=火` | 按属性筛选（含双属性） |
+| GET | `/api/monsters/search?q=雷伊&limit=20&offset=0` | 按名称搜索（分页） |
+| GET | `/api/monsters/type?element=火&limit=50&offset=0` | 按属性筛选（含双属性，分页） |
 | GET | `/api/monsters/top?stat=HP&n=10` | 能力排名（`stat` 也可用 `Total` 种族值总和） |
 | GET | `/api/monsters/{id}` | 精灵详情 |
 | GET | `/api/monsters/{id}/moves` | 技能列表（含学习等级/属性/类别） |
@@ -254,7 +310,15 @@ attrs.total          # 种族值总和
 | GET | `/api/types` | 全部单属性 |
 | GET | `/api/types/effectiveness?element=电·火` | 属性克制关系（打击面 + 防守面） |
 
-两个可选的查询参数 ✨新增：
+搜索和筛选是**分页**的。返回里 `total` 才是真实总数、`shown` 是这一页几条，
+别拿 `shown` 当总数 —— 早先的版本只返回 `count=len(结果)`，前端照着显示
+「共 20 条」，而实际可能有 127 条：
+
+```json
+{"total": 127, "shown": 20, "offset": 0, "results": [...]}
+```
+
+可选查询参数：
 
 ```bash
 # 技能效果描述（默认关，因为要多读一个库）
@@ -271,15 +335,24 @@ curl "/api/monsters/search?q=雷伊&fields=DefName,Total"
 ## 运行测试
 
 ```bash
-# 一行跑全部（90 项，全部离线，不需要游戏数据）
+# 一行跑全部（169 项，全部离线，不需要游戏数据）
 python -m pytest tests/ -q
 
+# 带覆盖率（门槛 80%，配在 pyproject.toml 的 [tool.coverage.report]）
+python -m pytest tests/ -q --cov
+
 # 也可以单独跑，每个测试文件都带独立入口
-python tests/test_ini_parser.py        #  6 项 INI 解析
-python tests/test_type_chart.py        # 22 项 属性克制
+python tests/test_pokedex.py           # 28 项 图鉴（临时造库）
 python tests/test_effects.py           # 27 项 技能效果解析
+python tests/test_type_chart.py        # 22 项 属性克制
+python tests/test_commands.py          # 16 项 子命令与日志
+python tests/test_ini_parser.py        # 14 项 INI 解析
+python tests/test_paths.py             # 12 项 路径解析
 python tests/test_attributes.py        # 12 项 六维属性
-python tests/test_pokedex.py           # 21 项 图鉴 (临时造库)
+python tests/test_account_manager.py   # 11 项 账号与任务
+python tests/test_web_api.py           # 10 项 Web API
+python tests/test_render.py            #  9 项 命令行排版
+python tests/test_integrity.py         #  6 项 MD5 校验
 python tests/test_template_match.py    #  2 项 合成图像匹配
 
 # 需要真实游戏数据库的检查（data/ 被 gitignore，所以不进 pytest）
@@ -287,26 +360,31 @@ python tests/test_pokedex.py /path/to/雷小伊目录
 python tests/test_effects.py /path/to/雷小伊目录
 ```
 
-代码检查：
+静态检查（CI 上这三道一起跑）：
 
 ```bash
-pip install ruff
-ruff check .
+pip install -r requirements.txt -r requirements-dev.txt
+pip install ruff mypy
+
+ruff check .                      # 风格与常见错误
+mypy .                            # 类型检查
+node --check web/static/app.js    # 前端 400 多行 JS 至少保证语法是通的
 ```
 
 ## 涉及的技术点
 
-- **INI 解析器**：多编码支持（UTF-8/GBK）、有序字典、内存增删改查、文件序列化
-- **SQLite 操作**：参数化查询、SQL 注入防护（列名白名单）、跨库关联查询
-- **MD5 校验**：分块哈希计算、文件名模糊匹配
+- **INI 解析器**：多编码支持（UTF-8/GBK）、有序字典、内存增删改查、**写回时按行打补丁**（只重写值变了的行，注释 / 空行 / 原始顺序都保留 —— 这个解析器写回的是游戏自己的配置文件）
+- **SQLite 操作**：参数化查询、SQL 注入防护（列名白名单）、跨库关联查询、**每线程一条连接**（共享一条并发时会抛 `InterfaceError`）、分页与总数分离
+- **MD5 校验**：分块哈希计算、文件名模糊匹配（单复数 / 大小写差异），且匹配结果不依赖 `os.listdir` 的返回顺序
 - **属性克制算法**：单属性查表 + 双属性拆分公式（不可简单相乘）、字典稀疏存储、贪心最长匹配解析属性名
 - **技能效果渲染**：模板占位符替换、从措辞推断参数类型（先六维后状态的判定顺序）、顺序消费参数组、全链路兜底不抛异常
 - **JSON 字段解析**：`Moves` 列是带学习等级的 JSON 数组，需容错解析并兼容旧格式
 - **值对象**：`@dataclass(frozen=True)` 封装六维属性，`FIELDS` 作为列顺序的单一事实来源
 - **OpenCV 模板匹配**：TM_CCOEFF_NORMED 算法、多模板搜索、可视化标注
-- **FastAPI Web 应用**：RESTful API 设计、静态文件服务、字段投影、前后端分离架构
-- **前端开发**：原生 JS SPA、Fetch API、DOM 操作、CSS Grid/Flexbox 响应式布局
-- **工程化**：ruff 静态检查、pytest 离线测试（合成数据库）、GitHub Actions 多版本矩阵
+- **FastAPI Web 应用**：工厂函数 + `app.state` 依赖注入（不用模块级全局，这样一个进程里能并存多个读不同库的 app）、lifespan 管理连接生命周期、静态文件服务、字段投影
+- **前端开发**：原生 JS SPA、Fetch API、DOM 操作、CSS Grid/Flexbox 响应式布局、插入数据库字段前统一转义
+- **路径解析**：区分「当前工作目录 / `__file__` / 用户配置目录」，兼容 PyInstaller 的 `sys._MEIPASS`，并记住用户选过的数据目录
+- **工程化**：ruff + mypy + pytest（169 项离线测试、合成数据库）+ 覆盖率门槛 + 前端 JS 语法检查 + GitHub Actions 五版本矩阵
 
 ## 致谢
 
