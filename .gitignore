@@ -24,6 +24,17 @@ build/
 .venv/
 venv/
 
+# 测试与类型检查的产物
+# .pytest_cache / .ruff_cache / .mypy_cache 其实各自带一个内容为 `*` 的
+# .gitignore（工具自己写的），本来就不会被提交。这里再列一遍是为了把意图
+# 写在自己的仓库里，而不是依赖工具的内部行为。
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
 # IDE
 .vscode/
 .idea/
