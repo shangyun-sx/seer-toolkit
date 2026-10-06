@@ -5,10 +5,14 @@
 一个学习项目，整合了 INI 解析、SQLite 操作、MD5 校验三大模块。
 
 用法:
-    python main.py                    # 交互式菜单
-    python main.py --data-dir <路径>  # 指定数据目录
+    python main.py                     # 交互式菜单
+    python main.py --data-dir <路径>   # 指定数据目录（含 Monster.db）
+    python main.py --game-dir <路径>   # 指定雷小伊根目录（含 account.ini）
+
+目录解析统一走 config/paths.py，「数据目录」一律指含 Monster.db 的那个目录。
 """
 
+import argparse
 import sys
 import os
 
@@ -21,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.ini_parser import IniParser
 from config.account_manager import AccountManager
+from config.paths import game_dir_of, remember_data_dir, resolve_data_dir
 from database.pokedex import Pokedex
 from database.integrity import IntegrityChecker
 from database.type_chart import TypeChart
@@ -29,11 +34,19 @@ from database.type_chart import TypeChart
 class App:
     """主程序"""
 
-    def __init__(self, data_dir: str):
+    def __init__(self, game_dir: str, data_dir: str):
+        """game_dir: 雷小伊根目录 —— account.ini / Config/ 在这儿
+           data_dir: 数据目录   —— Monster.db 在这儿
+
+        这两个以前是同一个参数（拿根目录再拼 '/data'），和 web 版/客户端
+        对「数据目录」的理解正好相反。现在统一：凡是叫 data-dir 的都指
+        含 Monster.db 的那个目录。
+        """
+        self.game_dir = game_dir
         self.data_dir = data_dir
-        self.mgr = AccountManager(data_dir)
-        self.pokedex = Pokedex(os.path.join(data_dir, 'data'))
-        self.checker = IntegrityChecker(os.path.join(data_dir, 'data'))
+        self.mgr = AccountManager(game_dir)
+        self.pokedex = Pokedex(data_dir)
+        self.checker = IntegrityChecker(data_dir)
 
     # ──────────────────────────────────────────
     #  菜单项
@@ -206,26 +219,24 @@ class App:
 
 
 def main():
-    # 解析命令行参数
-    data_dir = '.'
-    for i, arg in enumerate(sys.argv):
-        if arg == '--data-dir' and i + 1 < len(sys.argv):
-            data_dir = sys.argv[i + 1]
+    parser = argparse.ArgumentParser(description='雷小伊配置管理器')
+    # 这里以前是手写的参数循环，末尾单独一个 --data-dir 会被静默忽略；
+    # 换成 argparse 顺手把这个坑填了。
+    parser.add_argument('--data-dir', default=None,
+                        help='数据目录（含 Monster.db）。默认取 $SEER_DATA_DIR，'
+                             '再退到上次记住的目录，最后是 ./data')
+    parser.add_argument('--game-dir', default=None,
+                        help='雷小伊根目录（含 account.ini / Config/）。'
+                             '默认取数据目录的上一级')
+    args = parser.parse_args()
 
-    # 切换到脚本所在目录，方便相对路径引用
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(script_dir)
+    data_dir = resolve_data_dir(args.data_dir)
+    if args.data_dir:
+        # 用户明确指定过就记下来，下次不用再输
+        remember_data_dir(args.data_dir)
+    game_dir = args.game_dir or game_dir_of(data_dir)
 
-    # 如果 data_dir 是相对路径，基于脚本目录解析
-    if not os.path.isabs(data_dir):
-        # 优先尝试当前目录
-        if not os.path.exists(data_dir):
-            # 尝试雷小伊目录
-            alt = os.path.join(os.path.dirname(script_dir), data_dir)
-            if os.path.exists(alt):
-                data_dir = alt
-
-    app = App(data_dir)
+    app = App(game_dir, data_dir)
 
     menu = {
         '1': ('查看账号信息', app.show_accounts),
@@ -243,6 +254,7 @@ def main():
         print(f"\n{'='*50}")
         print(f"  雷小伊配置管理器 v1.0")
         print(f"  数据目录: {data_dir}")
+        print(f"  游戏目录: {game_dir}")
         print(f"{'='*50}")
         for key, (label, _) in menu.items():
             print(f"  [{key}] {label}")

@@ -16,7 +16,6 @@ import sys
 import os
 import argparse
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Query, HTTPException, Request
@@ -26,20 +25,13 @@ from fastapi.responses import FileResponse
 # 将项目根目录加入 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from config.paths import resource_path, resolve_data_dir
 from database.pokedex import Pokedex, _ALLOWED_STATS, _STAT_CN
 from database.type_chart import ELEMENT_TYPES, TypeChart
 
-#: 没有显式指定数据目录时的默认值
-DEFAULT_DATA_DIR = 'data'
-
-
-def resolve_data_dir(data_dir: Optional[str] = None) -> str:
-    """数据目录解析：显式参数 > 环境变量 SEER_DATA_DIR > 默认 ./data。
-
-    环境变量那条是给工厂模式准备的 —— `uvicorn web.app:create_app --factory`
-    没有办法传参数进来。
-    """
-    return data_dir or os.environ.get('SEER_DATA_DIR') or DEFAULT_DATA_DIR
+# 数据目录解析已经搬去 config/paths.py —— 客户端也要用同一套规则，不能再各写一份。
+# 这里把名字 import 进来只为不破坏已有调用方（`from web.app import resolve_data_dir`
+# 仍然有效）；新代码请直接 import config.paths。
 
 
 def get_pokedex(request: Request) -> Pokedex:
@@ -215,7 +207,9 @@ def create_app(data_dir: str = None) -> FastAPI:
         return {"monster_id": monster_id, "count": len(moves), "moves": moves}
 
     # ── 静态文件 ──────────────────────────
-    static_dir = Path(__file__).parent / "static"
+    # 走 resource_path 而不是 Path(__file__).parent —— 打包后 __file__ 指向
+    # PyInstaller 解压出的临时目录，前端得按 _MEIPASS 那套去找
+    static_dir = resource_path('web', 'static')
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
