@@ -100,6 +100,24 @@ def create_app(data_dir: str = None) -> FastAPI:
     )
     app.state.pokedex = dex
 
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):
+        """HTML / JS / CSS 一律不许浏览器自作主张缓存。
+
+        这几个文件是一起变的：缓存里留着**旧的 index.html**、却拿了**新的
+        app.js**，就会出现「JS 找不到新加的 DOM 元素 → 整页渲染中断」，而后端
+        全是 200 —— 表象是「数据加载失败」，排查时会一直往接口上找。
+
+        没有 Cache-Control 时浏览器会按启发式规则直接吃缓存、连问都不问。
+        加上 no-cache（是「每次要回源校验」，不是「不缓存」）就按 ETag 走 304，
+        代价很小。
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path == '/' or path.startswith('/static/'):
+            response.headers['Cache-Control'] = 'no-cache'
+        return response
+
     # ── API 路由 ──────────────────────────
 
     @app.get("/api/monsters/count")
