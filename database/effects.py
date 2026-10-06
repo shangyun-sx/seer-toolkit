@@ -36,10 +36,15 @@
 数据来源: https://api.seerapi.com/v1/skill_effect_type/<id>
 """
 
-import os
 import re
 import sqlite3
+import threading
 from typing import Dict, List, Optional, Sequence, Tuple
+
+try:
+    from database.connections import ThreadLocalConnections
+except ImportError:  # 直接运行 database/effects.py 时
+    from connections import ThreadLocalConnections
 
 # ──────────────────────────────────────────
 #  常量
@@ -92,10 +97,13 @@ class EffectParser:
         data_dir: 包含 EffectInfo.db 的目录
         """
         self.data_dir = data_dir
-        self._conn: Optional[sqlite3.Connection] = None
+        # 连接按线程各持一条 —— Pokedex.effects 是跨线程共享的，共享一条
+        # 连接在并发下会读到彼此的中间状态
+        self._conns = ThreadLocalConnections(data_dir)
         self._effects: Dict[int, Dict] = {}
         self._param_types: Dict[int, List[str]] = {}
         self._loaded = False
+        self._load_lock = threading.Lock()
 
     # ──────────────────────────────────────────
     #  数据库连接管理
@@ -103,19 +111,13 @@ class EffectParser:
 
     @property
     def effect_db(self) -> sqlite3.Connection:
-        if self._conn is None:
-            db_path = os.path.join(self.data_dir, 'EffectInfo.db')
-            if not os.path.exists(db_path):
-                raise FileNotFoundError(f"数据库不存在: {db_path}")
-            self._conn = sqlite3.connect(db_path, check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-        return self._conn
+        return self._conns.get('EffectInfo.db')
 
     def close(self) -> None:
         """关闭数据库连接并清空缓存"""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._conns.close()
+        self._effects = {}
+        self._param_types = {}
         self._loaded = False
 
     # ──────────────────────────────────────────
@@ -123,10 +125,21 @@ class EffectParser:
     # ──────────────────────────────────────────
 
     def _load(self) -> None:
-        """一次性把效果表和参数表读进内存（实测约 10ms，几百 KB）。"""
+        """一次性把效果表和参数表读进内存（实测约 10ms，几百 KB）。
+
+        带锁做双重检查：两个线程同时首次调用时，只让一个真去读，
+        其余等它读完直接用结果，免得重复装载、也免得读到半份数据。
+        """
         if self._loaded:
             return
 
+        with self._load_lock:
+            if self._loaded:      # 等锁期间已经被别的线程装好了
+                return
+            self._load_locked()
+
+    def _load_locked(self) -> None:
+        """真正的装载逻辑，调用方必须已经持有 `_load_lock`。"""
         self._param_types = {
             row['id']: (row['params'] or '').split('|')
             for row in self.effect_db.execute('SELECT id, params FROM ParamType')

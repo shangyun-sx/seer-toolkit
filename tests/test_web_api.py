@@ -143,13 +143,14 @@ def test_shutdown_closes_the_pokedex():
     with tempfile.TemporaryDirectory() as tmp:
         _make_fake_db(tmp, _FAKE_MONSTERS)
         app = create_app(tmp)
+        dex = app.state.pokedex
 
         with TestClient(app) as client:
             client.get('/api/monsters/count')      # 先建立真实连接
-            assert app.state.pokedex._monster_conn is not None
+            assert dex.open_connections() > 0
 
         # 退出 with 之后 lifespan 的收尾应当已经跑过
-        assert app.state.pokedex._monster_conn is None
+        assert dex.open_connections() == 0
 
 
 if __name__ == '__main__':

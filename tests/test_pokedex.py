@@ -14,6 +14,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -323,6 +324,76 @@ def test_sql_injection_blocked(dex):
 
 
 # ──────────────────────────────────────────
+#  并发
+# ──────────────────────────────────────────
+
+@_with_fake_db
+def test_concurrent_queries(dex):
+    """多线程并发查询：不抛异常，且每个线程看到的结果一致。
+
+    以前是一条共享连接 + check_same_thread=False。那个开关只是让 sqlite3
+    别抛异常，并没有让连接变线程安全。改成每线程一条之后，这里应当干净通过。
+    """
+    n_threads, n_queries = 8, 50
+    errors = []
+    counts = []
+
+    def worker():
+        try:
+            for _ in range(n_queries):
+                counts.append(dex.count())
+                dex.search('雷')
+        except Exception as e:
+            errors.append(f'{type(e).__name__}: {e}')
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f'并发查询出错: {errors[:3]}'
+    assert len(counts) == n_threads * n_queries, f'有查询没跑完: {len(counts)}'
+    assert set(counts) == {4}, f'各线程结果不一致: {set(counts)}'
+
+
+@_with_fake_db
+def test_close_releases_every_connection(dex):
+    """close() 要把各线程持有的连接全部关掉。
+
+    以前的 close() 只关自己记着的那一条；每线程一条之后，得挨个收干净 ——
+    Windows 上漏一条，数据目录就删不掉。
+    """
+    def worker():
+        dex.search('雷')
+
+    dex.search('雷')                                  # 主线程也开一条
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # 主线程 + 4 个子线程，各持一条 —— 共享连接的话这里只会是 1
+    assert dex.open_connections() == 5, f'期望每线程一条，实际 {dex.open_connections()}'
+
+    dex.close()
+    assert dex.open_connections() == 0, 'close() 没把连接收干净'
+
+
+@_with_fake_db
+def test_close_releases_effects_connections(dex):
+    """Pokedex.close() 要连带把 EffectParser 的连接也关掉"""
+    dex.get_moves(1, with_effects=True)      # 会惰性建出 EffectParser
+    assert dex.effects is not None
+
+    dex.close()
+    assert dex.open_connections() == 0
+    assert dex._effects is None, 'EffectParser 没被释放'
+
+
+# ──────────────────────────────────────────
 #  在线测试: 需要真实的游戏数据库
 # ──────────────────────────────────────────
 
@@ -397,6 +468,9 @@ _OFFLINE_TESTS = [
     test_total_not_injectable,
     test_sql_injection_blocked,
     test_sql_injection,
+    test_concurrent_queries,
+    test_close_releases_every_connection,
+    test_close_releases_effects_connections,
 ]
 
 

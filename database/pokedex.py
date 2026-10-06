@@ -11,14 +11,16 @@
 
 import json
 import sqlite3
-import os
+import threading
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 try:
     from database.attributes import FIELDS, TOTAL_SQL, SixAttributes
+    from database.connections import ThreadLocalConnections
     from database.type_chart import ELEMENT_TYPES, TypeChart
 except ImportError:  # 直接运行 database/pokedex.py 时
     from attributes import FIELDS, TOTAL_SQL, SixAttributes
+    from connections import ThreadLocalConnections
     from type_chart import ELEMENT_TYPES, TypeChart
 
 if TYPE_CHECKING:
@@ -62,9 +64,10 @@ class Pokedex:
         data_dir: 包含 Monster.db, Moves.db 等文件的目录
         """
         self.data_dir = data_dir
-        self._monster_conn: Optional[sqlite3.Connection] = None
-        self._move_conn: Optional[sqlite3.Connection] = None
+        # 连接按线程各持一条 —— 共享一条连接在并发下会读到彼此的中间状态
+        self._conns = ThreadLocalConnections(data_dir)
         self._effects: Optional[EffectParser] = None
+        self._effects_lock = threading.Lock()
 
     # ──────────────────────────────────────────
     #  数据库连接管理
@@ -72,42 +75,31 @@ class Pokedex:
 
     @property
     def monster_db(self) -> sqlite3.Connection:
-        if self._monster_conn is None:
-            db_path = os.path.join(self.data_dir, 'Monster.db')
-            if not os.path.exists(db_path):
-                raise FileNotFoundError(f"数据库不存在: {db_path}")
-            self._monster_conn = sqlite3.connect(db_path, check_same_thread=False)
-            self._monster_conn.row_factory = sqlite3.Row  # 支持字典式访问
-        return self._monster_conn
+        return self._conns.get('Monster.db')
 
     @property
     def move_db(self) -> sqlite3.Connection:
-        if self._move_conn is None:
-            db_path = os.path.join(self.data_dir, 'Moves.db')
-            if not os.path.exists(db_path):
-                raise FileNotFoundError(f"数据库不存在: {db_path}")
-            self._move_conn = sqlite3.connect(db_path, check_same_thread=False)
-            self._move_conn.row_factory = sqlite3.Row
-        return self._move_conn
+        return self._conns.get('Moves.db')
 
     @property
     def effects(self) -> 'EffectParser':
         """技能效果解析器（惰性创建，随 close() 一起释放）"""
         if self._effects is None:
-            # 函数内 import：effects 模块不依赖 pokedex，但放这里可以避免
-            # 将来有人加反向依赖时出现循环导入
-            from database.effects import EffectParser
-            self._effects = EffectParser(self.data_dir)
+            with self._effects_lock:
+                if self._effects is None:   # 可能被别的线程先建好了
+                    # 函数内 import：effects 模块不依赖 pokedex，但放这里可以
+                    # 避免将来有人加反向依赖时出现循环导入
+                    from database.effects import EffectParser
+                    self._effects = EffectParser(self.data_dir)
         return self._effects
 
+    def open_connections(self) -> int:
+        """当前还开着的 sqlite 连接数（诊断 / 测试用）"""
+        return self._conns.open_count()
+
     def close(self):
-        """关闭所有数据库连接"""
-        if self._monster_conn:
-            self._monster_conn.close()
-            self._monster_conn = None
-        if self._move_conn:
-            self._move_conn.close()
-            self._move_conn = None
+        """关闭所有数据库连接（含各线程各自持有的那些）"""
+        self._conns.close()
         if self._effects:
             self._effects.close()
             self._effects = None
