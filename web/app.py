@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.paths import resource_path, resolve_data_dir
-from database.pokedex import Pokedex, _ALLOWED_STATS, _STAT_CN
+from database.pokedex import Pokedex, ALLOWED_STATS, STAT_CN
 from database.type_chart import ELEMENT_TYPES, TypeChart
 
 # 数据目录解析已经搬去 config/paths.py —— 客户端也要用同一套规则，不能再各写一份。
@@ -101,7 +101,7 @@ def create_app(data_dir: str = None) -> FastAPI:
         return {
             "stats": [
                 {"key": k, "label": v}
-                for k, v in _STAT_CN.items()
+                for k, v in STAT_CN.items()
                 if k not in ("ID", "DefName", "Type", "Gender", "IsDark")
             ]
         }
@@ -194,10 +194,10 @@ def create_app(data_dir: str = None) -> FastAPI:
         dex: Pokedex = Depends(get_pokedex),
     ):
         """按某属性排名"""
-        if stat not in _ALLOWED_STATS:
-            raise HTTPException(400, f"无效排序字段: {stat}，可选: {', '.join(_ALLOWED_STATS)}")
+        if stat not in ALLOWED_STATS:
+            raise HTTPException(400, f"无效排序字段: {stat}，可选: {', '.join(ALLOWED_STATS)}")
         results = dex.top_n(stat, n)
-        return {"count": len(results), "stat": stat, "label": _STAT_CN.get(stat, stat), "results": results}
+        return {"count": len(results), "stat": stat, "label": STAT_CN.get(stat, stat), "results": results}
 
     @app.get("/api/monsters/{monster_id}")
     async def get_monster(

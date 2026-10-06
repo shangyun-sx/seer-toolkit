@@ -27,12 +27,14 @@ if TYPE_CHECKING:
     from database.effects import EffectParser
 
 
-# 允许排序的列名白名单 —— 防止 SQL 注入
-_ALLOWED_STATS = {'ID', 'DefName', 'Type', 'HP', 'Atk', 'Def',
-                  'SpAtk', 'SpDef', 'Spd', 'Gender', 'IsDark', 'Total'}
+# 允许排序的列名白名单 —— 防止 SQL 注入。
+# 公开名（不带下划线）：web 层的 /api/monsters/top 要拿它做校验。跨模块用
+# 私有名是错的信号 —— 下划线该表示「别人别碰」，不是「懒得想名字」。
+ALLOWED_STATS = {'ID', 'DefName', 'Type', 'HP', 'Atk', 'Def',
+                 'SpAtk', 'SpDef', 'Spd', 'Gender', 'IsDark', 'Total'}
 
-# 列名中文映射
-_STAT_CN = {
+# 列名 → 中文标签。web 层显示排序按钮也要用，同样是公开名。
+STAT_CN = {
     'ID': '编号', 'DefName': '名称', 'Type': '属性',
     'HP': '体力', 'Atk': '攻击', 'Def': '防御',
     'SpAtk': '特攻', 'SpDef': '特防', 'Spd': '速度',
@@ -186,12 +188,12 @@ class Pokedex:
     def top_n(self, stat: str, n: int = 10) -> List[Dict]:
         """
         按某项能力值排名前 N 的精灵。
-        stat 必须是 _ALLOWED_STATS 中的列名或 'Total' (白名单校验)。
+        stat 必须是 ALLOWED_STATS 中的列名或 'Total' (白名单校验)。
         """
-        if stat not in _ALLOWED_STATS:
+        if stat not in ALLOWED_STATS:
             raise ValueError(
                 f"不允许的排序字段: '{stat}'。"
-                f"可选: {', '.join(_ALLOWED_STATS)}"
+                f"可选: {', '.join(ALLOWED_STATS)}"
             )
 
         # 六维总是取全，这样每条结果都能算出种族值总和
