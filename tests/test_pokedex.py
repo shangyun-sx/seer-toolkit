@@ -477,9 +477,11 @@ def check_real_data(data_dir: str):
         for r in top:
             print(f"    #{r['ID']} {r['DefName']} HP={r['HP']}")
 
-        # 拿第一个有属性的精灵看看克制
+        # 拿第一个有属性的精灵看看克制（排版走 cli.render）
         if results:
-            dex.print_effectiveness(results[0]['ID'])
+            from cli import render
+            print(render.effectiveness(
+                dex.get_type_effectiveness(results[0]['ID'])))
     finally:
         dex.close()
 

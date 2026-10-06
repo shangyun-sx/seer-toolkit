@@ -23,6 +23,7 @@ if sys.platform == 'win32':
 # 将项目根目录加入 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from cli import render
 from config.ini_parser import IniParser
 from config.account_manager import AccountManager
 from config.paths import game_dir_of, remember_data_dir, resolve_data_dir
@@ -92,7 +93,7 @@ class App:
             return
 
         results = self.pokedex.search(name)
-        self.pokedex.print_table(results, f"搜索 '{name}'")
+        print(render.table(results, f"搜索 '{name}'"))
 
         if not results:
             return
@@ -104,23 +105,13 @@ class App:
                 mid = int(choice)
                 monster = self.pokedex.get_by_id(mid)
                 if monster:
-                    self.pokedex.print_monster(monster)
-                    # 属性克制
-                    self.pokedex.print_effectiveness(mid)
-                    # 查询技能
-                    moves = self.pokedex.get_moves(mid, with_effects=True)
-                    if moves:
-                        print(f"\n  技能列表 (共 {len(moves)} 个):")
-                        for m in moves:
-                            lv = m.get('LearningLv')
-                            lv_text = f"Lv{lv:<3}" if lv is not None else "额外  "
-                            category = m.get('CategoryName') or m.get('Category', '')
-                            type_name = m.get('TypeName') or m.get('Type', '')
-                            print(f"    {lv_text} {m['Name']:<12} {type_name:<4} "
-                                  f"{category:<3} 威力:{m.get('Power','?'):<4} "
-                                  f"PP:{m.get('MaxPP','?')}")
-                            if m.get('EffectText'):
-                                print(f"         └ {m['EffectText']}")
+                    print(render.monster(monster))
+                    # 属性克制：查数据是 Pokedex 的事，排版是 render 的事
+                    print(render.effectiveness(
+                        self.pokedex.get_type_effectiveness(mid)))
+                    # 技能
+                    print(render.move_list(
+                        self.pokedex.get_moves(mid, with_effects=True)))
                 else:
                     print("  ⚠️ 未找到该编号的精灵")
             except ValueError:
@@ -140,7 +131,8 @@ class App:
 
         # 纯数字当成精灵编号
         if raw.isdigit():
-            self.pokedex.print_effectiveness(int(raw))
+            print(render.effectiveness(
+                self.pokedex.get_type_effectiveness(int(raw))))
             return
 
         try:
@@ -152,20 +144,20 @@ class App:
         offense = TypeChart.offense_profile(raw)
         defense = TypeChart.defense_profile(raw)
 
-        def render(rows) -> str:
+        def fmt_rows(rows) -> str:
             return "  ".join(f"{name} {mult:g}x" for name, mult in rows) or "无"
 
         print(f"\n{'═'*50}")
         print(f"  【{label}】属性克制")
         print(f"{'═'*50}")
         print(f"  ── 用 {label} 系技能攻击 ──")
-        print(f"    🔺 克制: {render(offense['strong'])}")
-        print(f"    🔹 微弱: {render(offense['weak'])}")
-        print(f"    🚫 无效: {render(offense['immune'])}")
+        print(f"    🔺 克制: {fmt_rows(offense['strong'])}")
+        print(f"    🔹 微弱: {fmt_rows(offense['weak'])}")
+        print(f"    🚫 无效: {fmt_rows(offense['immune'])}")
         print(f"\n  ── {label} 系精灵受到攻击 ──")
-        print(f"    🔺 弱点: {render(defense['weaknesses'])}")
-        print(f"    🔹 抗性: {render(defense['resistances'])}")
-        print(f"    🚫 免疫: {render(defense['immunities'])}")
+        print(f"    🔺 弱点: {fmt_rows(defense['weaknesses'])}")
+        print(f"    🔹 抗性: {fmt_rows(defense['resistances'])}")
+        print(f"    🚫 免疫: {fmt_rows(defense['immunities'])}")
 
     def list_types(self):
         """列出全部属性"""

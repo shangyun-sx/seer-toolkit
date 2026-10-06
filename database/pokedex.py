@@ -395,61 +395,9 @@ class Pokedex:
         ))
         return moves
 
-    # ──────────────────────────────────────────
-    #  格式化输出
-    # ──────────────────────────────────────────
-
-    def print_monster(self, monster: Dict) -> None:
-        """美化打印单个精灵信息"""
-        print(f"\n{'='*50}")
-        print(f"  #{monster.get('ID', '?')}  {monster.get('DefName', '未知')}")
-        print(f"{'='*50}")
-        print(f"  属性: {monster.get('TypeName') or monster.get('Type', '?')}")
-        print(f"  体力:{monster.get('HP','?')}  攻击:{monster.get('Atk','?')}"
-              f"  防御:{monster.get('Def','?')}")
-        print(f"  特攻:{monster.get('SpAtk','?')}  特防:{monster.get('SpDef','?')}"
-              f"  速度:{monster.get('Spd','?')}")
-        print(f"  种族值总和: {SixAttributes.from_row(monster).total}")
-
-    def print_effectiveness(self, monster_id: int) -> None:
-        """打印精灵的属性克制资料"""
-        data = self.get_type_effectiveness(monster_id)
-        if not data:
-            print("  ⚠️ 该精灵没有可识别的属性")
-            return
-
-        print(f"\n{'─'*50}")
-        print(f"  {data['name']} 的属性克制 ({data['label']}系)")
-        print(f"{'─'*50}")
-
-        def render(rows) -> str:
-            if not rows:
-                return "无"
-            return "  ".join(f"{name} {mult:g}x" for name, mult in rows)
-
-        print(f"  🔺 弱点: {render(data['weaknesses'])}")
-        print(f"  🔹 抗性: {render(data['resistances'])}")
-        print(f"  🚫 免疫: {render(data['immunities'])}")
-
-    def print_table(self, rows: List[Dict], title: str = "查询结果") -> None:
-        """表格形式打印查询结果"""
-        if not rows:
-            print(f"\n[{title}] 无结果")
-            return
-
-        print(f"\n{'─'*68}")
-        print(f"  {title} (共 {len(rows)} 条)")
-        print(f"{'─'*68}")
-        header = (f"{'ID':>5}  {'名称':<10} {'属性':<10} {'体力':>4} {'攻击':>4} "
-                  f"{'防御':>4} {'特攻':>4} {'特防':>4} {'速度':>4} {'总和':>5}")
-        print(header)
-        print('-' * 68)
-        for r in rows:
-            type_text = r.get('TypeName') or r.get('Type', '')
-            print(f"{r.get('ID',''):>5}  {r.get('DefName',''):<10} {type_text:<10} "
-                  f"{r.get('HP',''):>4} {r.get('Atk',''):>4} {r.get('Def',''):>4} "
-                  f"{r.get('SpAtk',''):>4} {r.get('SpDef',''):>4} {r.get('Spd',''):>4} "
-                  f"{r.get('Total',''):>5}")
+    # 展示逻辑（原来的 print_monster / print_table / print_effectiveness）
+    # 已挪到 cli/render.py —— Pokedex 只负责查数据、返回 dict，排版是界面层的事。
+    # 这样换 UI（桌面客户端 / Web）时，领域对象不会拖着一堆 print 走。
 
 
 # ──────────────────────────────────────────
@@ -457,15 +405,16 @@ class Pokedex:
 # ──────────────────────────────────────────
 if __name__ == '__main__':
     import sys
+
+    from cli import render
+
     data_dir = sys.argv[1] if len(sys.argv) > 1 else 'data'
     dex = Pokedex(data_dir)
 
     print(f"精灵总数: {dex.count()}")
 
     # 搜索示例
-    results = dex.search('雷伊')
-    dex.print_table(results, "搜索 '雷伊'")
+    print(render.table(dex.search('雷伊'), "搜索 '雷伊'"))
 
     # 排名前5体力
-    top = dex.top_n('HP', 5)
-    dex.print_table(top, "体力 Top 5")
+    print(render.table(dex.top_n('HP', 5), "体力 Top 5"))
