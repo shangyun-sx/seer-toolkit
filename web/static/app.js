@@ -74,7 +74,7 @@ async function loadStatOptions() {
     const res = await fetch('/api/monsters/stats');
     const data = await res.json();
     statButtons.innerHTML = data.stats.map(s =>
-      `<button class="stat-btn" data-stat="${s.key}">${s.label}</button>`
+      `<button class="stat-btn" data-stat="${esc(s.key)}">${esc(s.label)}</button>`
     ).join('');
 
     // 点击事件
@@ -103,7 +103,7 @@ async function loadCommonTypes() {
   }
 
   typeTags.innerHTML = types.map(t =>
-    `<span class="type-tag" data-type="${t}">${t}</span>`
+    `<span class="type-tag" data-type="${esc(t)}">${esc(t)}</span>`
   ).join('');
 
   typeTags.querySelectorAll('.type-tag').forEach(tag => {
@@ -121,7 +121,7 @@ async function loadTypeOptions() {
     const res = await fetch('/api/types');
     const data = await res.json();
     typeSelect.innerHTML = data.types.map(t =>
-      `<option value="${t.name}">${t.name} (${t.name_en})</option>`
+      `<option value="${esc(t.name)}">${esc(t.name)} (${esc(t.name_en)})</option>`
     ).join('');
   } catch (e) {
     console.error('加载属性下拉框失败:', e);
@@ -199,7 +199,7 @@ function renderEffectRows(groups) {
       <span class="effect-tags">${
         rows && rows.length
           ? rows.map(([name, mult]) =>
-              `<span class="type-tag ${cls}">${name} ${mult}x</span>`).join('')
+              `<span class="type-tag ${cls}">${esc(name)} ${esc(mult)}x</span>`).join('')
           : '<span class="effect-none">无</span>'
       }</span>
     </div>
@@ -217,7 +217,7 @@ function renderEffectPanel(data) {
   effectPanel.classList.remove('hidden');
   effectPanel.innerHTML = `
     <div class="effect-group">
-      <h3>用 ${data.element} 系技能攻击</h3>
+      <h3>用 ${esc(data.element)} 系技能攻击</h3>
       ${renderEffectRows([
         ['🔺 克制', data.offense.strong, 'strong'],
         ['🔹 微弱', data.offense.weak, 'weak'],
@@ -225,7 +225,7 @@ function renderEffectPanel(data) {
       ])}
     </div>
     <div class="effect-group">
-      <h3>${data.element} 系精灵受到攻击</h3>
+      <h3>${esc(data.element)} 系精灵受到攻击</h3>
       ${renderEffectRows([
         ['🔺 弱点', data.defense.weaknesses, 'strong'],
         ['🔹 抗性', data.defense.resistances, 'weak'],
@@ -236,6 +236,20 @@ function renderEffectPanel(data) {
 }
 
 // ── 渲染 ──────────────────────────
+
+// 把值插进 innerHTML / 属性之前先转义。
+// 精灵名、技能名、技能描述都来自数据库文本 —— 实际数据里几乎不会出现
+// & < > "，但拼 innerHTML 不做转义是错的模式；真出现时的表现是「页面白
+// 一块」，很难往数据上想。顺带也修掉名字里带 & 时的显示错乱。
+function esc(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // meta 形如 {total, shown}。total 才是真实总数，shown 是这一页的条数 ——
 // 以前只传 len(结果)，于是搜索被 LIMIT 20 截断后界面还写着「共 20 条」。
@@ -266,8 +280,8 @@ function renderResults(results, title, meta) {
   tableBody.innerHTML = results.map(r => `
     <tr onclick="showDetail(${r.ID})" title="点击查看详情">
       <td class="monster-id">#${r.ID}</td>
-      <td class="monster-name">${r.DefName || ''}</td>
-      <td>${r.TypeName || r.Type || ''}</td>
+      <td class="monster-name">${esc(r.DefName)}</td>
+      <td>${esc(r.TypeName || r.Type)}</td>
       <td>${r.HP ?? '-'}</td>
       <td>${r.Atk ?? '-'}</td>
       <td>${r.Def ?? '-'}</td>
@@ -297,8 +311,8 @@ async function showDetail(id) {
 
     detailContent.innerHTML = `
       <div class="detail-header">
-        <h2>#${monster.ID} ${monster.DefName}</h2>
-        <span class="detail-id">${monster.TypeName || monster.Type || '未知属性'}</span>
+        <h2>#${monster.ID} ${esc(monster.DefName)}</h2>
+        <span class="detail-id">${esc(monster.TypeName || monster.Type) || '未知属性'}</span>
       </div>
       <div class="detail-stats">
         <div class="stat-item">
@@ -328,7 +342,7 @@ async function showDetail(id) {
       </div>
       ${effect ? `
         <div class="detail-section">
-          <h3>属性克制 (${effect.label}系)</h3>
+          <h3>属性克制 (${esc(effect.label)}系)</h3>
           ${renderEffectRows([
             ['🔺 弱点', effect.weaknesses, 'strong'],
             ['🔹 抗性', effect.resistances, 'weak'],
@@ -344,16 +358,16 @@ async function showDetail(id) {
               <li>
                 <div class="move-row">
                   <span>
-                    <span class="move-name">${m.Name || '?'}</span>
+                    <span class="move-name">${esc(m.Name) || '?'}</span>
                     <span style="color:var(--text-dim);font-size:0.75rem">
-                      ${m.LearningLv != null ? `Lv${m.LearningLv} ` : ''}${m.TypeName || m.Type || ''} ${m.CategoryName || m.Category || ''}
+                      ${m.LearningLv != null ? `Lv${m.LearningLv} ` : ''}${esc(m.TypeName || m.Type)} ${esc(m.CategoryName || m.Category)}
                     </span>
                   </span>
                   <span class="move-info">
                     威力:${m.Power || '-'} PP:${m.MaxPP || '-'} 命中:${m.Accuracy || '-'}
                   </span>
                 </div>
-                ${m.EffectText ? `<div class="move-effect">${m.EffectText}</div>` : ''}
+                ${m.EffectText ? `<div class="move-effect">${esc(m.EffectText)}</div>` : ''}
               </li>
             `).join('')}
           </ul>

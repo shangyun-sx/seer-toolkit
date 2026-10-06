@@ -158,6 +158,18 @@ def test_search_reports_true_total_not_page_size():
             assert page2['results'][0]['ID'] != data['results'][0]['ID']
 
 
+def test_api_returns_raw_text_not_html_escaped():
+    """API 返回数据库原文，转义只在前端做一次。
+
+    两边都转义的话，名字里带 & 的精灵会显示成 &amp;amp; 这种双重转义。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_fake_db(tmp, [(1, '<雷伊&>', 5, 70, 120, 80, 110, 80, 130)])
+        with TestClient(create_app(tmp)) as client:
+            data = client.get('/api/monsters/search', params={'q': '雷'}).json()
+            assert data['results'][0]['DefName'] == '<雷伊&>', data['results'][0]
+
+
 def test_type_endpoint_reports_true_total():
     """按属性筛选同样要给出真实总数"""
     monsters = [
@@ -206,6 +218,7 @@ if __name__ == '__main__':
         test_bad_input_never_reaches_the_database,
         test_bad_input_does_not_corrupt_the_database,
         test_search_reports_true_total_not_page_size,
+        test_api_returns_raw_text_not_html_escaped,
         test_type_endpoint_reports_true_total,
         test_static_routes_do_not_need_a_database,
         test_shutdown_closes_the_pokedex,
