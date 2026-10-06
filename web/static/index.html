@@ -55,21 +55,6 @@
       <span id="resultCount"></span>
     </div>
 
-    <!-- 翻页条：只在「搜索 / 属性筛选」且结果多于一页时出现 -->
-    <div id="pager" class="pager hidden">
-      <button id="prevPage" class="page-btn">‹ 上一页</button>
-      <span id="pageInfo" class="page-info"></span>
-      <button id="nextPage" class="page-btn">下一页 ›</button>
-      <label class="page-size">每页
-        <select id="pageSize">
-          <option value="20">20</option>
-          <option value="50">50</option>
-          <option value="100">100</option>
-        </select>
-        条
-      </label>
-    </div>
-
     <!-- 加载动画 -->
     <div id="loading" class="loading hidden">
       <div class="spinner"></div>
@@ -108,6 +93,24 @@
         <tbody id="tableBody">
         </tbody>
       </table>
+    </div>
+
+    <!-- 翻页条：紧跟在结果表格下方。只在「搜索 / 属性筛选」且多于一页时出现 -->
+    <div id="pager" class="pager hidden">
+      <div class="page-nav">
+        <button id="prevPage" class="page-btn">‹ 上一页</button>
+        <span id="pageInfo" class="page-info"></span>
+        <button id="nextPage" class="page-btn">下一页 ›</button>
+      </div>
+      <label class="page-size">
+        每页
+        <select id="pageSize">
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        条
+      </label>
     </div>
   </section>
 </main>

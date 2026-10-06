@@ -504,22 +504,29 @@ tbody tr:hover {
 }
 
 /* ── 翻页条 ─────────────────────── */
+/* 紧跟在表格下方：导航居中、每页条数靠右，用一条细分隔线收尾。
+   不套带边框的方框 —— 那种形状悬在内容中间很突兀。 */
 .pager {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.page-nav {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
 }
 
 .page-btn {
-  padding: 6px 14px;
+  padding: 7px 16px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
+  border-radius: 8px;
+  background: var(--surface);
   color: var(--text);
   font-size: 0.85rem;
   cursor: pointer;
@@ -532,31 +539,48 @@ tbody tr:hover {
 }
 
 .page-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .page-info {
+  /* 等宽数字：翻页时「第 1 / 7 页」不会因为数字宽度不同而左右抖 */
+  min-width: 96px;
+  text-align: center;
   color: var(--text-dim);
   font-size: 0.85rem;
-  min-width: 90px;
-  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .page-size {
-  margin-left: auto;
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-dim);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .page-size select {
-  padding: 4px 8px;
+  padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   cursor: pointer;
+}
+
+/* 窄屏放不下「导航居中 + 条数靠右」，改成上下两行 */
+@media (max-width: 640px) {
+  .pager {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .page-size {
+    position: static;
+  }
 }
 
 /* ── 通用 ─────────────────────── */
