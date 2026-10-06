@@ -1,7 +1,37 @@
-# 只放工具配置，不改打包方式 —— 运行时依赖仍然走 requirements.txt。
+# 工具配置 + 打包元数据。
 #
-# 这里的规则集是刻意调宽的：目标是「新代码守规矩」，不是「把老代码全改一遍」。
+# 打包段是为了让桌面客户端（seer-client）能 `pip install -e ../seer-toolkit`
+# 直接复用这里的代码，而不是复制一份出去。依赖不在两处维护 —— 直接读
+# requirements.txt。
+#
+# ruff 的规则集是刻意调宽的：目标是「新代码守规矩」，不是「把老代码全改一遍」。
 # 老代码的风格问题（超长行、引号不统一等）不在这轮的范围内。
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seer-toolkit"
+# 注意：这个版本号目前和 web/app.py 的 "2.0.0"、main.py 的 "v1.0" 不一致。
+# 统一是清单里的 F12，这里先立一个包版本的锚点。
+version = "0.1.0"
+description = "赛尔号本地数据工具：INI 解析 / SQLite 图鉴 / 属性克制 / 技能效果 / FastAPI Web"
+readme = "README.md"
+requires-python = ">=3.9"
+# 依赖的唯一来源是 requirements.txt，不在这里重复写
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["config", "database", "vision", "web"]
+# main.py 是脚本入口，不打进包里 —— 照旧 `python main.py` 跑
+
+[tool.setuptools.package-data]
+# 前端静态文件必须跟着包走，否则 web 版和客户端打开都是白屏
+web = ["static/*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.ruff]
 line-length = 120
