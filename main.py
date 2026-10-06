@@ -15,6 +15,7 @@
 import argparse
 import sys
 import os
+from typing import Optional
 
 # Windows GBK 终端下强制 UTF-8 输出
 if sys.platform == 'win32':
@@ -35,26 +36,69 @@ from database.type_chart import TypeChart
 class App:
     """主程序"""
 
-    def __init__(self, game_dir: str, data_dir: str):
+    def __init__(self, game_dir: str, data_dir: str,
+                 show_passwords: bool = False):
         """game_dir: 雷小伊根目录 —— account.ini / Config/ 在这儿
            data_dir: 数据目录   —— Monster.db 在这儿
 
         这两个以前是同一个参数（拿根目录再拼 '/data'），和 web 版/客户端
         对「数据目录」的理解正好相反。现在统一：凡是叫 data-dir 的都指
         含 Monster.db 的那个目录。
+
+        show_passwords: 是否明文显示账号密码。默认关 —— 终端内容容易被
+        截屏、录屏、贴进聊天框。
         """
         self.game_dir = game_dir
         self.data_dir = data_dir
+        self.show_passwords = show_passwords
         self.mgr = AccountManager(game_dir)
         self.pokedex = Pokedex(data_dir)
         self.checker = IntegrityChecker(data_dir)
+
+    # ──────────────────────────────────────────
+    #  内部辅助
+    # ──────────────────────────────────────────
+
+    def _pick_account(self) -> Optional[str]:
+        """让用户挑一个账号，返回 QQ 号；取消或没有账号时返回 None。
+
+        以前这两个地方写死 accounts[0] —— 多账号时永远只操作第一个，
+        而且界面上完全看不出来，用户以为在改第二个账号的任务。
+        """
+        accounts = self.mgr.list_accounts()
+        if not accounts:
+            print("\n  ⚠️ 未找到任何账号")
+            return None
+        if len(accounts) == 1:
+            return accounts[0]['qq']
+
+        print(f"\n  共 {len(accounts)} 个账号:")
+        for index, acc in enumerate(accounts, 1):
+            print(f"    [{index}] {acc['qq']}  ({acc['nick']})")
+
+        raw = input("\n  选择账号编号 (直接回车取消): ").strip()
+        if not raw:
+            return None
+        try:
+            chosen = int(raw)
+        except ValueError:
+            print("  ⚠️ 请输入数字编号")
+            return None
+        if not 1 <= chosen <= len(accounts):
+            print("  ⚠️ 编号超出范围")
+            return None
+        return accounts[chosen - 1]['qq']
 
     # ──────────────────────────────────────────
     #  菜单项
     # ──────────────────────────────────────────
 
     def show_accounts(self):
-        """查看账号信息"""
+        """查看账号信息。
+
+        密码默认打码 —— 终端内容很容易被截屏、录屏、或整个贴进聊天框。
+        确实要看明文就加 --show-passwords。
+        """
         accounts = self.mgr.list_accounts()
         if not accounts:
             print("\n  ⚠️ 未找到任何账号")
@@ -65,7 +109,10 @@ class App:
         for acc in accounts:
             print(f"  QQ: {acc['qq']}")
             print(f"  昵称: {acc['nick']}")
-            print(f"  密码: {acc['pass']}")
+            if self.show_passwords:
+                print(f"  密码: {acc['pass']}")
+            else:
+                print("  密码: ******  (要显示请加 --show-passwords)")
             print()
 
     def show_task_summary(self):
@@ -177,12 +224,10 @@ class App:
 
     def toggle_task(self):
         """切换任务开关"""
-        accounts = self.mgr.list_accounts()
-        if not accounts:
-            print("\n  ⚠️ 未找到任何账号")
+        qq = self._pick_account()
+        if qq is None:
             return
 
-        qq = accounts[0]['qq']  # 默认第一个账号
         summary = self.mgr.task_summary(qq)
 
         print(f"\n  账号: {qq}")
@@ -220,6 +265,10 @@ def main():
     parser.add_argument('--game-dir', default=None,
                         help='雷小伊根目录（含 account.ini / Config/）。'
                              '默认取数据目录的上一级')
+    parser.add_argument('--show-passwords', action='store_true',
+                        help='明文显示账号密码（默认打码）')
+    parser.add_argument('--debug', action='store_true',
+                        help='出错时抛出完整堆栈，而不是只打印一行')
     args = parser.parse_args()
 
     data_dir = resolve_data_dir(args.data_dir)
@@ -228,7 +277,8 @@ def main():
         remember_data_dir(args.data_dir)
     game_dir = args.game_dir or game_dir_of(data_dir)
 
-    app = App(game_dir, data_dir)
+    app = App(game_dir, data_dir, show_passwords=args.show_passwords)
+    debug = args.debug
 
     menu = {
         '1': ('查看账号信息', app.show_accounts),
@@ -262,7 +312,13 @@ def main():
             except FileNotFoundError as e:
                 print(f"\n  ❌ 文件错误: {e}")
             except Exception as e:
-                print(f"\n  ❌ 出错了: {e}")
+                # 把异常吞成一行中文，等于把「到底哪一行炸的」彻底丢掉 ——
+                # 交互式菜单里出问题时最难查的就是这个。默认至少给出异常
+                # 类型和获取堆栈的办法；--debug 时干脆抛出去。
+                if debug:
+                    raise
+                print(f"\n  ❌ 出错了: {type(e).__name__}: {e}")
+                print("     （加 --debug 重新运行可以看到完整堆栈）")
         else:
             print("\n  ⚠️ 无效选项，请重新选择")
 
