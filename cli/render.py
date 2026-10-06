@@ -82,6 +82,31 @@ def effectiveness(data: Optional[Dict]) -> str:
     ])
 
 
+def type_profile(label: str, offense: Dict, defense: Dict) -> str:
+    """某属性的完整克制面：打击面 + 防守面。
+
+    offense / defense 分别来自 TypeChart.offense_profile / defense_profile。
+    以前这段排版内联在 main.py 的菜单方法里，加了子命令之后两边都要用，
+    就搬到这儿了。
+    """
+    def rows(items) -> str:
+        return '  '.join(f'{name} {mult:g}x' for name, mult in items) or '无'
+
+    return '\n'.join([
+        f"\n{'═' * 50}",
+        f"  【{label}】属性克制",
+        f"{'═' * 50}",
+        f"  ── 用 {label} 系技能攻击 ──",
+        f"    🔺 克制: {rows(offense['strong'])}",
+        f"    🔹 微弱: {rows(offense['weak'])}",
+        f"    🚫 无效: {rows(offense['immune'])}",
+        f"\n  ── {label} 系精灵受到攻击 ──",
+        f"    🔺 弱点: {rows(defense['weaknesses'])}",
+        f"    🔹 抗性: {rows(defense['resistances'])}",
+        f"    🚫 免疫: {rows(defense['immunities'])}",
+    ])
+
+
 def move_list(moves: List[Dict], title: str = '技能列表') -> str:
     """技能列表（含学习等级与效果文本）"""
     if not moves:

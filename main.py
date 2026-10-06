@@ -13,6 +13,7 @@
 """
 
 import argparse
+import logging
 import sys
 import os
 from typing import Optional
@@ -20,20 +21,29 @@ from typing import Optional
 # Windows GBK 终端下强制 UTF-8 输出。
 # hasattr 不只是给 mypy 看的：stdout 被换成别的对象时（重定向、被测试框架
 # 接管）很多实现没有 reconfigure，硬调会 AttributeError。
+#
+# stderr 也要一起改：只改 stdout 的话，`2>&1` 会把 UTF-8 的输出和 GBK 的
+# 错误信息混进同一个管道，读的那端两种编码都按一种解，必然有一个是乱码。
 if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.platform == 'win32' and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # 将项目根目录加入 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cli import render
+from cli import commands, render
 from config.ini_parser import IniParser
 from config.account_manager import AccountManager
+from config.logsetup import setup_logging
 from config.paths import game_dir_of, remember_data_dir, resolve_data_dir
 from config.version import __version__
 from database.pokedex import Pokedex
 from database.integrity import IntegrityChecker
 from database.type_chart import TypeChart
+
+#: 诊断信息走 logging（打 stderr）；菜单和表格才是 print（打 stdout）
+log = logging.getLogger(__name__)
 
 
 class App:
@@ -193,21 +203,8 @@ class App:
 
         offense = TypeChart.offense_profile(raw)
         defense = TypeChart.defense_profile(raw)
-
-        def fmt_rows(rows) -> str:
-            return "  ".join(f"{name} {mult:g}x" for name, mult in rows) or "无"
-
-        print(f"\n{'═'*50}")
-        print(f"  【{label}】属性克制")
-        print(f"{'═'*50}")
-        print(f"  ── 用 {label} 系技能攻击 ──")
-        print(f"    🔺 克制: {fmt_rows(offense['strong'])}")
-        print(f"    🔹 微弱: {fmt_rows(offense['weak'])}")
-        print(f"    🚫 无效: {fmt_rows(offense['immune'])}")
-        print(f"\n  ── {label} 系精灵受到攻击 ──")
-        print(f"    🔺 弱点: {fmt_rows(defense['weaknesses'])}")
-        print(f"    🔹 抗性: {fmt_rows(defense['resistances'])}")
-        print(f"    🚫 免疫: {fmt_rows(defense['immunities'])}")
+        # 排版见 cli/render.py —— 子命令那边也要用同一份，别再内联一遍
+        print(render.type_profile(label, offense, defense))
 
     def list_types(self):
         """列出全部属性"""
@@ -258,30 +255,9 @@ class App:
         print(f"  自动确认: {'是' if self.mgr.is_auto_confirm() else '否'}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description='雷小伊配置管理器')
-    # 这里以前是手写的参数循环，末尾单独一个 --data-dir 会被静默忽略；
-    # 换成 argparse 顺手把这个坑填了。
-    parser.add_argument('--data-dir', default=None,
-                        help='数据目录（含 Monster.db）。默认取 $SEER_DATA_DIR，'
-                             '再退到上次记住的目录，最后是 ./data')
-    parser.add_argument('--game-dir', default=None,
-                        help='雷小伊根目录（含 account.ini / Config/）。'
-                             '默认取数据目录的上一级')
-    parser.add_argument('--show-passwords', action='store_true',
-                        help='明文显示账号密码（默认打码）')
-    parser.add_argument('--debug', action='store_true',
-                        help='出错时抛出完整堆栈，而不是只打印一行')
-    args = parser.parse_args()
-
-    data_dir = resolve_data_dir(args.data_dir)
-    if args.data_dir:
-        # 用户明确指定过就记下来，下次不用再输
-        remember_data_dir(args.data_dir)
-    game_dir = args.game_dir or game_dir_of(data_dir)
-
-    app = App(game_dir, data_dir, show_passwords=args.show_passwords)
-    debug = args.debug
+def run_menu(app: 'App', debug: bool) -> None:
+    """交互式菜单 —— 不给子命令时的默认行为"""
+    data_dir, game_dir = app.data_dir, app.game_dir
 
     menu = {
         '1': ('查看账号信息', app.show_accounts),
@@ -309,22 +285,120 @@ def main():
         if choice == '0':
             print("\n  再见! 👋")
             break
-        elif choice in menu and menu[choice][1] is not None:
-            try:
-                menu[choice][1]()
-            except FileNotFoundError as e:
-                print(f"\n  ❌ 文件错误: {e}")
-            except Exception as e:
-                # 把异常吞成一行中文，等于把「到底哪一行炸的」彻底丢掉 ——
-                # 交互式菜单里出问题时最难查的就是这个。默认至少给出异常
-                # 类型和获取堆栈的办法；--debug 时干脆抛出去。
-                if debug:
-                    raise
-                print(f"\n  ❌ 出错了: {type(e).__name__}: {e}")
-                print("     （加 --debug 重新运行可以看到完整堆栈）")
-        else:
+
+        entry = menu.get(choice)
+        if entry is None or entry[1] is None:
             print("\n  ⚠️ 无效选项，请重新选择")
+            continue
+
+        handler = entry[1]
+        try:
+            handler()
+        except FileNotFoundError as e:
+            log.warning('文件错误: %s', e)
+            print(f"\n  ❌ 文件错误: {e}")
+        except Exception:
+            # 堆栈交给 logging（打 stderr；--debug 时另存一份文件）。
+            # 以前这里是 print(f"出错了: {e}")，把「哪一行炸的」彻底丢了 ——
+            # 交互式菜单里出问题时最难查的就是这个。
+            log.exception('菜单项执行失败')
+            if debug:
+                raise
+            print("\n  ❌ 出错了 —— 上面是定位信息，加 --debug 可看完整堆栈")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """命令行参数。
+
+    不给子命令时进交互式菜单；给了就非交互执行一次然后退出 ——
+    这样这个工具能被脚本调用，也能 `--json | jq` 接进别的流程。
+    """
+    parser = argparse.ArgumentParser(
+        description='雷小伊配置管理器（不给子命令时进交互式菜单）')
+    # 这里以前是手写的参数循环，末尾单独一个 --data-dir 会被静默忽略
+    parser.add_argument('--data-dir', default=None,
+                        help='数据目录（含 Monster.db）。默认取 $SEER_DATA_DIR，'
+                             '再退到上次记住的目录，最后是 ./data')
+    parser.add_argument('--game-dir', default=None,
+                        help='雷小伊根目录（含 account.ini / Config/）。'
+                             '默认取数据目录的上一级')
+    parser.add_argument('--show-passwords', action='store_true',
+                        help='明文显示账号密码（默认打码）')
+    parser.add_argument('--debug', action='store_true',
+                        help='输出 DEBUG 日志并写日志文件；出错时抛完整堆栈')
+
+    sub = parser.add_subparsers(dest='command', metavar='命令')
+
+    def with_json(p, help_text='输出 JSON（给脚本 / jq 用）'):
+        p.add_argument('--json', action='store_true', help=help_text)
+        return p
+
+    p = with_json(sub.add_parser('search', help='按名字搜索精灵'))
+    p.add_argument('name', help='精灵名称关键词')
+    p.add_argument('--limit', type=int, default=20, help='最多返回几条')
+
+    p = with_json(sub.add_parser('by-type', help='按属性筛选精灵'))
+    p.add_argument('element', help='属性名，如 火 / 电·火')
+    p.add_argument('--limit', type=int, default=50, help='最多返回几条')
+
+    p = with_json(sub.add_parser('top', help='按能力值排名'))
+    p.add_argument('stat', help='排序字段，如 HP / Atk / Total')
+    p.add_argument('-n', type=int, default=10, help='取前几名')
+
+    with_json(sub.add_parser('types', help='列出全部单属性（不需要数据库）'))
+
+    p = with_json(sub.add_parser('effectiveness', help='属性克制（属性名或精灵编号）'))
+    p.add_argument('target', help='属性名（火 / 电·火）或精灵编号')
+
+    with_json(sub.add_parser('integrity', help='校验数据库完整性'))
+    with_json(sub.add_parser('accounts', help='列出账号（默认不含密码）'))
+
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    log_path = setup_logging(debug=args.debug)
+
+    data_dir = resolve_data_dir(args.data_dir)
+    if args.data_dir:
+        # 用户明确指定过就记下来，下次不用再输
+        remember_data_dir(args.data_dir)
+    game_dir = args.game_dir or game_dir_of(data_dir)
+
+    if args.command is None:
+        app = App(game_dir, data_dir, show_passwords=args.show_passwords)
+        if log_path:
+            print(f"日志: {log_path}")
+        run_menu(app, args.debug)
+        return 0
+
+    # ── 非交互模式 ──────────────────────
+    if args.command == 'types':
+        return commands.list_types(as_json=args.json)
+    if args.command == 'integrity':
+        return commands.integrity(data_dir, as_json=args.json)
+    if args.command == 'accounts':
+        return commands.accounts(game_dir, as_json=args.json,
+                                 show_passwords=args.show_passwords)
+
+    app = App(game_dir, data_dir, show_passwords=args.show_passwords)
+    try:
+        if args.command == 'search':
+            return commands.search(app.pokedex, args.name, args.limit, args.json)
+        if args.command == 'by-type':
+            return commands.by_type(app.pokedex, args.element, args.limit, args.json)
+        if args.command == 'top':
+            return commands.top(app.pokedex, args.stat, args.n, args.json)
+        if args.command == 'effectiveness':
+            return commands.effectiveness(app.pokedex, args.target, args.json)
+    except FileNotFoundError as e:
+        return commands._fail(f'找不到数据库: {e}')
+    finally:
+        app.pokedex.close()
+
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

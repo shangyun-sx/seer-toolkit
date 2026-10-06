@@ -17,8 +17,11 @@ INI 文件解析器 —— 手写实现，不依赖第三方库。
 
 import re
 import os
+import logging
 from collections import OrderedDict
 from typing import Optional, List, Tuple, Dict, Set
+
+log = logging.getLogger(__name__)
 
 #: 节头 `[Name]` 与键值对 `key=value` 的行格式。
 #: load() 和行级补丁 (_patch_lines) 共用同一套，避免两处写法漂移。
@@ -206,9 +209,19 @@ class IniParser:
         if not output_path:
             raise ValueError("未指定保存路径")
 
-        with open(output_path, 'w',
-                  encoding=self._encoding or 'gbk', errors='replace') as f:
-            f.write(self._serialize())
+        encoding = self._encoding or 'gbk'
+        text = self._serialize()
+
+        # errors='replace' 会把编码写不出的字符悄悄换成 '?' —— 那是数据损坏，
+        # 只是不抛异常而已。至少留下痕迹：真的发生了就报一声。
+        try:
+            text.encode(encoding)
+        except UnicodeEncodeError as e:
+            log.warning('%s 里有 %s 写不出的字符，写回时会被替换成 "?": %s',
+                        output_path, encoding, e)
+
+        with open(output_path, 'w', encoding=encoding, errors='replace') as f:
+            f.write(text)
 
     def _serialize(self) -> str:
         """有原始行就打补丁，否则整份重新生成"""
