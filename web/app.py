@@ -109,24 +109,44 @@ def create_app(data_dir: str = None) -> FastAPI:
     @app.get("/api/monsters/search")
     async def search(
         q: str = Query(..., min_length=1, description="精灵名称关键词"),
+        limit: int = Query(20, ge=1, le=200, description="这一页最多几条"),
+        offset: int = Query(0, ge=0, description="跳过前几条"),
         fields: Optional[str] = Query(None, description="逗号分隔的字段名，只返回这些字段"),
         dex: Pokedex = Depends(get_pokedex),
     ):
-        """按名称模糊搜索"""
-        results = [project_fields(row, fields) for row in dex.search(q)]
-        return {"count": len(results), "results": results}
+        """按名称模糊搜索。
+
+        返回里 **total 才是真实总数**，shown 只是这一页有几条。以前只有
+        count=len(结果)，前端照着显示「共 N 条」，用户会以为是全部。
+        """
+        rows = dex.search(q, limit=limit, offset=offset)
+        return {
+            "total": dex.count_search(q),
+            "shown": len(rows),
+            "offset": offset,
+            "results": [project_fields(row, fields) for row in rows],
+        }
 
     @app.get("/api/monsters/type")
     async def filter_by_type(
         element: str = Query(..., min_length=1, description="属性名，如 火/水/草/电·火"),
+        limit: int = Query(50, ge=1, le=200, description="这一页最多几条"),
+        offset: int = Query(0, ge=0, description="跳过前几条"),
         dex: Pokedex = Depends(get_pokedex),
     ):
         """按属性筛选（双属性精灵也能被任一属性筛到）"""
         try:
-            results = dex.filter_by_type(element)
+            rows = dex.filter_by_type(element, limit=limit, offset=offset)
+            total = dex.count_by_type(element)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        return {"count": len(results), "element": element, "results": results}
+        return {
+            "total": total,
+            "shown": len(rows),
+            "offset": offset,
+            "element": element,
+            "results": rows,
+        }
 
     # ── 属性克制 ──────────────────────────
 

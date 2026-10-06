@@ -324,6 +324,59 @@ def test_sql_injection_blocked(dex):
 
 
 # ──────────────────────────────────────────
+#  分页与总数
+# ──────────────────────────────────────────
+
+@_with_fake_db
+def test_count_search_is_independent_of_paging(dex):
+    """总数和「这一页有几条」是两回事。
+
+    以前 API 拿 len(结果) 当总数，搜索被 LIMIT 截断后界面还写着「共 20 条」。
+    """
+    assert dex.count_search('') == 4          # 假数据里 4 只非皮肤精灵
+
+    first = dex.search('', limit=2, offset=0)
+    second = dex.search('', limit=2, offset=2)
+
+    assert len(first) == 2 and len(second) == 2
+    assert dex.count_search('') == 4, '分页不该改变总数'
+    assert [r['ID'] for r in first] != [r['ID'] for r in second], '第二页应当是别的行'
+    # 两页拼起来应当正好是全部
+    assert ({r['ID'] for r in first} | {r['ID'] for r in second}
+            == {r['ID'] for r in dex.search('', limit=100)})
+
+
+@_with_fake_db
+def test_count_by_type_is_independent_of_paging(dex):
+    """按属性筛选，总数同样不受分页影响"""
+    total = dex.count_by_type('电')
+    assert total > 0
+
+    assert len(dex.filter_by_type('电', limit=1)) == 1
+    assert dex.count_by_type('电') == total
+
+
+@_with_fake_db
+def test_list_and_total_share_the_same_skin_rule(dex):
+    """列表和总数必须用同一个「排除皮肤」条件，否则数字对不上。
+
+    假数据里有 1 只皮肤（ID 15001）。以前 ID < 15000 散在四处手写，
+    漏改一处就会出现「列表 3 条、总数 4 只」这种口径不一致。
+    """
+    assert dex.count() == 4
+    assert len(dex.search('', limit=100)) == 4
+    assert dex.count_search('') == 4
+    assert dex.count_by_type('电') == len(dex.filter_by_type('电', limit=100))
+
+
+@_with_fake_db
+def test_search_limit_defaults_are_sane(dex):
+    """不给参数时的默认页大小仍能正常返回"""
+    assert len(dex.search('')) == 4          # 默认 limit=20，4 条全回来
+    assert len(dex.filter_by_type('电')) == len(dex.filter_by_type('电', limit=100))
+
+
+# ──────────────────────────────────────────
 #  并发
 # ──────────────────────────────────────────
 
@@ -468,6 +521,10 @@ _OFFLINE_TESTS = [
     test_total_not_injectable,
     test_sql_injection_blocked,
     test_sql_injection,
+    test_count_search_is_independent_of_paging,
+    test_count_by_type_is_independent_of_paging,
+    test_list_and_total_share_the_same_skin_rule,
+    test_search_limit_defaults_are_sane,
     test_concurrent_queries,
     test_close_releases_every_connection,
     test_close_releases_effects_connections,

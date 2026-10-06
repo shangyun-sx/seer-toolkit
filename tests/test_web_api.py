@@ -131,6 +131,50 @@ def test_bad_input_does_not_corrupt_the_database():
             assert client.get('/api/monsters/count').json()['count'] == 2
 
 
+def test_search_reports_true_total_not_page_size():
+    """API 的 total 是真实总数，shown 才是这一页的条数。
+
+    以前只返回 count=len(结果)，前端照着显示「共 20 条」—— 搜索被 LIMIT
+    截断后，用户以为那就是全部。
+    """
+    monsters = [
+        (1, '雷伊', 5, 70, 120, 80, 110, 80, 130),
+        (2, '雷神', 5, 90, 130, 90, 120, 90, 140),
+        (3, '雷光', 12, 60, 100, 70, 100, 70, 90),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_fake_db(tmp, monsters)
+        with TestClient(create_app(tmp)) as client:
+            data = client.get('/api/monsters/search',
+                              params={'q': '雷', 'limit': 1}).json()
+
+            assert data['total'] == 3, f'真实总数应当是 3: {data}'
+            assert data['shown'] == 1, f'这一页只有 1 条: {data}'
+            assert len(data['results']) == 1
+
+            # offset 能翻到下一页，且拿到的是不同的行
+            page2 = client.get('/api/monsters/search',
+                               params={'q': '雷', 'limit': 1, 'offset': 1}).json()
+            assert page2['results'][0]['ID'] != data['results'][0]['ID']
+
+
+def test_type_endpoint_reports_true_total():
+    """按属性筛选同样要给出真实总数"""
+    monsters = [
+        (1, '火甲', 3, 60, 90, 70, 90, 70, 80),
+        (2, '火乙', 3, 61, 91, 71, 91, 71, 81),
+        (3, '水丙', 2, 62, 92, 72, 92, 72, 82),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        _make_fake_db(tmp, monsters)
+        with TestClient(create_app(tmp)) as client:
+            data = client.get('/api/monsters/type',
+                              params={'element': '火', 'limit': 1}).json()
+
+            assert data['total'] == 2, data
+            assert data['shown'] == 1, data
+
+
 def test_static_routes_do_not_need_a_database():
     """/api/types 和 /api/monsters/stats 是纯静态表，没有数据库也该能用"""
     with TestClient(create_app()) as client:
@@ -161,6 +205,8 @@ if __name__ == '__main__':
         test_search_and_field_projection,
         test_bad_input_never_reaches_the_database,
         test_bad_input_does_not_corrupt_the_database,
+        test_search_reports_true_total_not_page_size,
+        test_type_endpoint_reports_true_total,
         test_static_routes_do_not_need_a_database,
         test_shutdown_closes_the_pokedex,
     ]

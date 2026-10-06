@@ -142,7 +142,7 @@ async function doSearch() {
   try {
     const res = await fetch(`/api/monsters/search?q=${encodeURIComponent(q)}`);
     const data = await res.json();
-    renderResults(data.results, `搜索 "${q}"`, data.count);
+    renderResults(data.results, `搜索 "${q}"`, data);
   } catch (e) {
     showError('搜索失败，请检查网络连接');
   }
@@ -153,7 +153,7 @@ async function loadByType(element) {
   try {
     const res = await fetch(`/api/monsters/type?element=${encodeURIComponent(element)}`);
     const data = await res.json();
-    renderResults(data.results, `${element}系精灵`, data.count);
+    renderResults(data.results, `${element}系精灵`, data);
   } catch {
     showError('筛选失败');
   }
@@ -164,7 +164,9 @@ async function loadTopN(stat, n) {
   try {
     const res = await fetch(`/api/monsters/top?stat=${stat}&n=${n}`);
     const data = await res.json();
-    renderResults(data.results, `${data.label} Top ${n}`, data.count);
+    // Top N 不是分页，就是「前 N 名」，所以总数和显示数相同
+    renderResults(data.results, `${data.label} Top ${n}`,
+                  { total: data.count, shown: data.count });
   } catch {
     showError('加载失败');
   }
@@ -235,7 +237,15 @@ function renderEffectPanel(data) {
 
 // ── 渲染 ──────────────────────────
 
-function renderResults(results, title, count) {
+// meta 形如 {total, shown}。total 才是真实总数，shown 是这一页的条数 ——
+// 以前只传 len(结果)，于是搜索被 LIMIT 20 截断后界面还写着「共 20 条」。
+function formatCount(meta) {
+  const total = meta.total ?? meta.count ?? 0;
+  const shown = meta.shown ?? total;
+  return shown < total ? `显示 ${shown} / 共 ${total} 条` : `共 ${total} 条`;
+}
+
+function renderResults(results, title, meta) {
   hideLoading();
   emptyState.classList.add('hidden');
   effectPanel.classList.add('hidden');
@@ -250,7 +260,7 @@ function renderResults(results, title, count) {
   }
 
   resultTitle.textContent = title;
-  resultCount.textContent = `共 ${count} 条`;
+  resultCount.textContent = formatCount(meta);
   resultTable.classList.remove('hidden');
 
   tableBody.innerHTML = results.map(r => `

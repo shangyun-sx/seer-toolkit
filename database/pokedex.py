@@ -43,6 +43,12 @@ _STAT_CN = {
 # 表达式由 attributes.FIELDS 拼成，不掺任何用户输入
 _SORT_EXPRESSIONS = {'Total': TOTAL_SQL}
 
+#: SQL 条件：只要真正的精灵。
+#: 皮肤也在 monsters 表里，但它们 ID >= 15000，不算图鉴里的精灵。
+#: 抽成常量是因为这条规则散在 search / count / filter_by_type / top_n 几处，
+#: 改动时漏掉一处，就会出现「列表少一条但总数没变」这种口径不一致。
+_NOT_SKIN = 'ID < 15000'
+
 # 属性名称 → 单属性 ID 映射（数据统一来自 database/type_chart.py）
 _TYPE_NAME_TO_ID = {cn: tid for tid, (cn, _en) in ELEMENT_TYPES.items()}
 
@@ -108,15 +114,29 @@ class Pokedex:
     #  查询方法
     # ──────────────────────────────────────────
 
-    def search(self, name: str) -> List[Dict]:
-        """按名字模糊搜索精灵（排除皮肤 ID ≥ 15000）"""
+    def search(self, name: str, limit: int = 20, offset: int = 0) -> List[Dict]:
+        """按名字模糊搜索精灵（排除皮肤）。
+
+        limit / offset 用于分页。注意**这一页的条数不等于总数** —— 要总数请调
+        `count_search()`。以前 API 层拿 len(结果) 当总数，于是界面上写着
+        「共 20 条」而实际远不止 20 条。
+        """
         cur = self.monster_db.execute(
             "SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
-            "FROM monsters WHERE DefName LIKE ? AND ID < 15000 "
-            "ORDER BY ID LIMIT 20",
-            (f'%{name}%',)
+            f"FROM monsters WHERE DefName LIKE ? AND {_NOT_SKIN} "
+            "ORDER BY ID LIMIT ? OFFSET ?",
+            (f'%{name}%', limit, offset)
         )
         return self._rows(cur.fetchall())
+
+    def count_search(self, name: str) -> int:
+        """按名字模糊搜索的总条数（不受分页影响）"""
+        cur = self.monster_db.execute(
+            f"SELECT COUNT(*) AS cnt FROM monsters "
+            f"WHERE DefName LIKE ? AND {_NOT_SKIN}",
+            (f'%{name}%',)
+        )
+        return cur.fetchone()['cnt']
 
     def get_by_id(self, monster_id: int) -> Optional[Dict]:
         """按 ID 精确查询"""
@@ -128,10 +148,12 @@ class Pokedex:
             return None
         return self._add_type_name(dict(row))
 
-    def filter_by_type(self, element: str, limit: int = 50) -> List[Dict]:
+    def filter_by_type(self, element: str, limit: int = 50, offset: int = 0) -> List[Dict]:
         """
         按属性筛选 (如 '火', '水', '草·超能')，双属性精灵也能被自己的
         任一属性筛出来。支持中文属性名、英文名或数字 ID。
+
+        limit / offset 用于分页，总数用 count_by_type() 取。
         """
         # 数据库存的是「属性组合 ID」，所以要把所有含该属性的组合都算上
         combo_ids = TypeChart.combination_ids(element)
@@ -142,10 +164,24 @@ class Pokedex:
         cur = self.monster_db.execute(
             f"SELECT ID, DefName, Type, HP, Atk, Def, SpAtk, SpDef, Spd "
             f"FROM monsters WHERE CAST(Type AS TEXT) IN ({placeholders}) "
-            f"AND ID < 15000 ORDER BY ID LIMIT ?",
-            [str(cid) for cid in combo_ids] + [limit]
+            f"AND {_NOT_SKIN} ORDER BY ID LIMIT ? OFFSET ?",
+            [str(cid) for cid in combo_ids] + [limit, offset]
         )
         return self._rows(cur.fetchall())
+
+    def count_by_type(self, element: str) -> int:
+        """某属性的精灵总数（不受分页影响）"""
+        combo_ids = TypeChart.combination_ids(element)
+        if not combo_ids:
+            return 0
+
+        placeholders = ','.join(['?'] * len(combo_ids))
+        cur = self.monster_db.execute(
+            f"SELECT COUNT(*) AS cnt FROM monsters "
+            f"WHERE CAST(Type AS TEXT) IN ({placeholders}) AND {_NOT_SKIN}",
+            [str(cid) for cid in combo_ids]
+        )
+        return cur.fetchone()['cnt']
 
     def top_n(self, stat: str, n: int = 10) -> List[Dict]:
         """
@@ -169,7 +205,7 @@ class Pokedex:
         # 使用参数化查询防止注入
         cur = self.monster_db.execute(
             f"SELECT {', '.join(selected)} "
-            f'FROM monsters WHERE ID < 15000 ORDER BY "{stat}" DESC LIMIT ?',
+            f'FROM monsters WHERE {_NOT_SKIN} ORDER BY "{stat}" DESC LIMIT ?',
             (n,)
         )
         return self._rows(cur.fetchall())
@@ -184,7 +220,7 @@ class Pokedex:
     def count(self) -> int:
         """获取精灵总数（排除皮肤）"""
         cur = self.monster_db.execute(
-            "SELECT COUNT(*) as cnt FROM monsters WHERE ID < 15000"
+            f"SELECT COUNT(*) as cnt FROM monsters WHERE {_NOT_SKIN}"
         )
         return cur.fetchone()['cnt']
 
