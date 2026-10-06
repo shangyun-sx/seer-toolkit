@@ -1,5 +1,18 @@
-opencv-python>=4.5.0
-numpy>=1.20.0
-pyautogui>=0.9.50
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
+# 运行时依赖。测试才用的东西在 requirements-dev.txt。
+#
+# 都加上限：只写 `>=` 的话，上游发大版本时 CI 和用户环境会在同一天变红，
+# 而且看起来和本项目的改动毫无关系。这里只卡大版本，不打补丁号 ——
+# 小版本还是要跟上的。
+
+opencv-python>=4.5,<5
+numpy>=1.20,<3
+pyautogui>=0.9.50,<1
+fastapi>=0.100,<1
+uvicorn[standard]>=0.23,<1
+
+# 关于 opencv-python-headless：
+# vision 那条线只用了 imread / matchTemplate / imwrite，没有任何 cv2 GUI 调用，
+# 理论上可以换 headless（体积小、不依赖系统 libGL）。但 headless 和
+# opencv-python 提供的是同一个 cv2 模块，装在一起必然打架；而本地和 CI 现在
+# 装的都是 opencv-python，换过去等于要所有人重建环境。收益又有限 —— 顺带说，
+# 桌面客户端根本不打包 cv2（v1 排除了 vision）。所以维持现状。

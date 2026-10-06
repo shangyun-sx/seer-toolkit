@@ -13,14 +13,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seer-toolkit"
-# 注意：这个版本号目前和 web/app.py 的 "2.0.0"、main.py 的 "v1.0" 不一致。
-# 统一是清单里的 F12，这里先立一个包版本的锚点。
-version = "0.1.0"
 description = "赛尔号本地数据工具：INI 解析 / SQLite 图鉴 / 属性克制 / 技能效果 / FastAPI Web"
 readme = "README.md"
 requires-python = ">=3.9"
-# 依赖的唯一来源是 requirements.txt，不在这里重复写
-dynamic = ["dependencies"]
+# 两个都不在这里写死：
+#   dependencies -> requirements.txt
+#   version      -> config/version.py（代码里也从那儿读，见该模块说明）
+dynamic = ["dependencies", "version"]
 
 [tool.setuptools]
 packages = ["cli", "config", "database", "vision", "web"]
@@ -32,10 +31,14 @@ web = ["static/*"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
+# 走 attr（setuptools 会用 AST 解析，不会真去 import）—— 版本号的单一来源
+version = {attr = "config.version.__version__"}
 
 [tool.ruff]
 line-length = 120
-target-version = "py38"
+# 项目下限是 3.9（见 requires-python），所以写 py39。
+# 以前写的是 py38 —— 和 requires-python 对不上，而且那个数字纯粹是遗留的。
+target-version = "py39"
 # 游戏数据目录不参与检查
 extend-exclude = ["data", "识图"]
 
@@ -50,6 +53,11 @@ ignore = [
     # 行长不强制：现有代码有长行，而且中文字符的实际显示宽度和字符数
     # 对不上，按字符数卡没有意义
     "E501",
+    # 用 typing.Dict/List/Tuple 还是内置的 dict/list/tuple。
+    # 全项目统一用前者（含新写的代码 —— 跟着周围风格走），改成内置写法要动
+    # 150 多处、淹没 git blame，和「不改老代码」的约定冲突。所以把这类建议
+    # 关掉 —— 注意 target-version 是 py39，这两条不关的话会立刻冒出 151 个。
+    "UP006", "UP035",
 ]
 # 没有启用 "I"（导入排序）：本项目的入口和测试都用
 # 「先 sys.path.insert 再 import」把项目根目录塞进 sys.path，

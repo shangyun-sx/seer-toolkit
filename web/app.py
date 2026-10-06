@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.paths import resource_path, resolve_data_dir
+from config.version import __version__
 from database.pokedex import Pokedex, ALLOWED_STATS, STAT_CN
 from database.type_chart import ELEMENT_TYPES, TypeChart
 
@@ -83,7 +84,7 @@ def create_app(data_dir: str = None) -> FastAPI:
     app = FastAPI(
         title="精灵图鉴 Web 版",
         description="基于 SQLite 的赛尔号精灵查询系统",
-        version="2.0.0",
+        version=__version__,
         lifespan=lifespan,
     )
     app.state.pokedex = dex

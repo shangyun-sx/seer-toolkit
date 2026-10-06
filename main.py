@@ -30,6 +30,7 @@ from cli import render
 from config.ini_parser import IniParser
 from config.account_manager import AccountManager
 from config.paths import game_dir_of, remember_data_dir, resolve_data_dir
+from config.version import __version__
 from database.pokedex import Pokedex
 from database.integrity import IntegrityChecker
 from database.type_chart import TypeChart
@@ -296,7 +297,7 @@ def main():
 
     while True:
         print(f"\n{'='*50}")
-        print(f"  雷小伊配置管理器 v1.0")
+        print(f"  雷小伊配置管理器 v{__version__}")
         print(f"  数据目录: {data_dir}")
         print(f"  游戏目录: {game_dir}")
         print(f"{'='*50}")
