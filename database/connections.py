@@ -51,6 +51,28 @@ class ThreadLocalConnections:
             cache[filename] = conn
         return conn
 
+    @staticmethod
+    def _tune(conn: sqlite3.Connection) -> None:
+        """调一下 SQLite 的两项默认值。
+
+        SQLite 默认页缓存是 2MB，而目录里最小的库都比它大（Monster.db 5.4MB）——
+        于是几乎每次查询都要回磁盘。实测：主键查一行也要 25ms，和全表扫描一样，
+        因为代价全在「碰文件」这一步，跟查询写得好不好无关。
+
+            默认                23.7 ms
+            mmap_size=256MB      0.7 ms
+            cache_size=8MB       0.8 ms
+
+        接口层的效果：/api/monsters/search 从 56ms 降到 6ms。
+
+        两个都设，但主次不同：
+          * mmap 是主力 —— 页面由 OS 管理、**多条连接共享**，不重复占内存
+          * cache_size 是兜底 —— 库放在网络盘之类 mmap 不生效的地方时，
+            还不至于退回原速。注意它是**每连接**的，所以只给 8MB 而不是更大
+        """
+        conn.execute('PRAGMA mmap_size = 268435456')   # 256MB 上限，按文件实际大小映射
+        conn.execute('PRAGMA cache_size = -8000')      # 负数的单位是 KB
+
     def _open(self, filename: str) -> sqlite3.Connection:
         path = os.path.join(self.data_dir, filename)
         if not os.path.exists(path):
@@ -59,6 +81,7 @@ class ThreadLocalConnections:
         # check_same_thread=False 只为 close() 能跨线程收尾（见模块开头）
         conn = sqlite3.connect(path, check_same_thread=False)
         conn.row_factory = sqlite3.Row      # 支持字典式访问
+        self._tune(conn)
         with self._lock:
             self._all.append(conn)
         return conn
