@@ -15,6 +15,9 @@
   --grass: #22c55e;
   --electric: #eab308;
   --dark: #8b5cf6;
+  /* 顶部 header 的高度。main 的 min-height 和滚动目标的 scroll-margin 都用它
+     —— 这个数字以前写死在 main 里，现在收成一处 */
+  --header-h: 73px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -106,7 +109,7 @@ header h1 {
 /* ── 主体布局 ─────────────────────── */
 main {
   display: flex;
-  min-height: calc(100vh - 73px);
+  min-height: calc(100vh - var(--header-h));
 }
 
 /* ── 侧边栏 ─────────────────────── */
@@ -200,6 +203,9 @@ aside {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  /* 翻页时会把它滚到视口顶部，而 header 是 sticky 的、正好会盖住 ——
+     让出 header 的高度再多一点空隙 */
+  scroll-margin-top: calc(var(--header-h) + 12px);
 }
 
 #resultTitle {

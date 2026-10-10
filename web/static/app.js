@@ -180,6 +180,8 @@ async function loadPage(offset) {
     if (!res.ok) throw new Error(data.detail || '加载失败');
     state.offset = offset;      // 成功了才记页码，失败时维持原样
     renderResults(data.results, currentTitle(), data);
+    // 翻页条在表格下方：不滚的话视图停在底部，看不到新一页的第一行
+    scrollToResults();
   } catch (e) {
     showError(e.message || '加载失败');
   }
@@ -455,6 +457,37 @@ function closeModal() {
 }
 
 // ── UI 辅助 ──────────────────────────
+
+/**
+ * 把视图滚到结果区的开头。
+ *
+ * 为什么单独抽成函数、而不是内联在翻页 handler 里：翻页现在要的是「滚到
+ * 结果开头」，将来做深链接时 popstate 想要的是「恢复上次的位置」—— 同一件
+ * 事的不同目标，留一个函数比留两处内联好改（那时多接一个 target 参数就行）。
+ *
+ * 两个细节：
+ *   * 用 scrollIntoView 而不是 window.scrollTo。内容区有 overflow-y: auto，
+ *     到底是视口在滚还是 .content 在滚，取决于内容高度 —— scrollIntoView 会
+ *     自己找最近的滚动容器，不用我们去猜。
+ *   * 顶部 header 是 sticky 的，会把滚过去的元素盖住；靠 CSS 里的
+ *     scroll-margin-top 给它让位。
+ *
+ * 锚在结果栏（而不是表格）上：这样滚完能看到「第 2 / 7 页」那行，
+ * 用户才知道自己翻到哪了。
+ */
+function scrollToResults({ smooth = true } = {}) {
+  const anchor = $('#resultBar');
+  if (!anchor || resultTable.classList.contains('hidden')) return;
+
+  // 系统里勾了「减少动态效果」就别做平滑滚动
+  const reduceMotion =
+    window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+  anchor.scrollIntoView({
+    behavior: smooth && !reduceMotion ? 'smooth' : 'auto',
+    block: 'start',
+  });
+}
 
 function showLoading() {
   loadingEl.classList.remove('hidden');
