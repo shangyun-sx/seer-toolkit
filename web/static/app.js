@@ -6,6 +6,18 @@
 // 每页条数的默认值。地址栏里等于这个值时不写出来，链接短一点
 const DEFAULT_LIMIT = 20;
 
+/**
+ * 加载序号。每发起一次加载就 +1，响应回来时对一下 —— 不是最新的就丢弃。
+ *
+ * 不加这个会出真问题（实测过）：让「火」慢、「水」快，先点火再点水，
+ * 结果**表格里是火的数据、标题却写着「水系精灵」**。因为标题是渲染时按当前
+ * state 算的，而行数据来自那次迟到的响应。
+ *
+ * loadPage 和 loadTopN 共用这一个计数器 —— 它们都是「重画结果区」，
+ * 谁后发起谁作准，跟走的是哪条路无关。
+ */
+let loadSeq = 0;
+
 // ── 全局状态 ──────────────────────────
 const state = {
   currentMode: 'search',   // 'search' | 'type' | 'top'
@@ -312,17 +324,20 @@ async function loadPage(offset, { navigate = true } = {}) {
   const url = queryUrl(offset);
   if (!url) return;
 
+  const seq = ++loadSeq;
   showLoading();
   try {
     const res = await fetch(url);
     const data = await res.json();
+    if (seq !== loadSeq) return;   // 期间又发起了新的，这次结果作废
     if (!res.ok) throw new Error(data.detail || '加载失败');
     state.offset = offset;      // 成功了才记页码，失败时维持原样
     // 滚动由 renderResults 负责，这里不要再来一次
     renderResults(data.results, currentTitle(), data, { scroll: navigate });
     if (navigate) syncUrl();
   } catch (e) {
-    showError(e.message || '加载失败');
+    // 过期的错误也不该顶掉新结果
+    if (seq === loadSeq) showError(e.message || '加载失败');
   }
 }
 
@@ -345,10 +360,12 @@ function selectType(element) {
 }
 
 async function loadTopN(stat, n, { navigate = true } = {}) {
+  const seq = ++loadSeq;      // 和 loadPage 共用序号，见 loadSeq 的说明
   showLoading();
   try {
     const res = await fetch(`/api/monsters/top?stat=${stat}&n=${n}`);
     const data = await res.json();
+    if (seq !== loadSeq) return;   // 期间又发起了新的，这次结果作废
     // 地址栏能带 ?stat=... 进来，所以「排序字段非法」这条错误路径是真的可达
     if (!res.ok) throw new Error(data.detail || '加载失败');
     // Top N 不是分页，就是「前 N 名」，所以总数和显示数相同
@@ -357,7 +374,7 @@ async function loadTopN(stat, n, { navigate = true } = {}) {
                   { scroll: navigate });
     if (navigate) syncUrl();
   } catch (e) {
-    showError(e.message || '加载失败');
+    if (seq === loadSeq) showError(e.message || '加载失败');
   }
 }
 

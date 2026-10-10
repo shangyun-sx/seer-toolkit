@@ -26,7 +26,6 @@ const APP_JS = path.resolve(here, '..', 'web', 'static', 'app.js');
 // scrollCalls、textContent、classList）。
 
 const els = {};
-const fetched = [];
 const pushed = [];
 
 function stubEl() {
@@ -71,7 +70,6 @@ const SAMPLE = {
 // 各接口返回各自该有的形状 —— 不然 init() 里那几个侧边栏加载器会报错刷屏，
 // 把真正的失败淹掉
 globalThis.fetch = async (url) => {
-  fetched.push(url);
   let body;
   if (url.includes('/monsters/count')) body = { count: 5343 };
   else if (url.includes('/monsters/stats')) body = { stats: [] };
@@ -95,6 +93,15 @@ vm.runInThisContext(
 );
 
 const app = globalThis.__exports;
+
+// app.js 末尾会跑 init()，它是异步的（四个侧边栏加载器 + applyUrlState）。
+// 不等它落定就往下走，会有两个后果：它中途重置 state（applyUrlState 里的
+// showWelcome），以及它恢复时用的是我们后面换掉的 fetch 桩 —— 实测两种都
+// 会让人对着一个假失败查半天。
+//
+// 这也是「app.js 没有状态清理入口」的具体表现：每加一节测试，都得先想清楚
+// init() 有没有落定、上一节留下了什么。
+await new Promise((resolve) => setTimeout(resolve, 30));
 
 // ── 断言 ────────────────────────────────────
 //
@@ -293,6 +300,51 @@ check('navigate:false -> 不写历史', pushed.length, 0);
 await loadPageWith(undefined);                       // 用户导航（默认）
 check('默认 -> 滚一次', bar.scrollCalls.length, 1);
 check('默认 -> 写历史一次', pushed.length, 1);
+
+// ── 请求竞态 ────────────────────────────────
+
+section('请求竞态：先发的后回，不该盖掉后发的');
+//
+// 实测过的真问题：让「火」慢、「水」快，先点火再点水，结果表格里是火的
+// 数据、标题却写着「水系精灵」—— 标题是渲染时按当前 state 算的，而行数据
+// 来自那次迟到的响应。
+//
+// 快速连点、连按后退都会走到这里。修法是 loadSeq 请求序号（见 app.js）。
+
+app.state.currentMode = 'type';
+app.state.limit = 20;
+
+const raceDelays = { 火: 60, 水: 5 };
+globalThis.fetch = async (url) => {
+  const which = decodeURIComponent(url).includes('火') ? '火' : '水';
+  await new Promise((resolve) => setTimeout(resolve, raceDelays[which]));
+  return {
+    ok: true,
+    json: async () => ({
+      results: [{ ...SAMPLE, DefName: `RESULT-${which}` }],
+      total: 1, shown: 1,
+    }),
+  };
+};
+
+const tableBody = app.$('#tableBody');
+
+function loadType(element) {
+  app.state.currentQuery = element;
+  return app.loadPage(0);
+}
+
+const slow = loadType('火');          // 先点，但慢
+const quick = loadType('水');         // 后点，但快
+await Promise.all([slow, quick]);
+await new Promise((resolve) => setTimeout(resolve, 40));
+
+check('两种顺序都落定后，表格是后点的那次',
+      (tableBody.innerHTML.match(/RESULT-([火水])/) || [])[1], '水');
+
+await loadType('火');                 // 单次加载不该被序号机制误伤
+check('单次加载仍然正常',
+      (tableBody.innerHTML.match(/RESULT-([火水])/) || [])[1], '火');
 
 // ── 汇总 ────────────────────────────────────
 
