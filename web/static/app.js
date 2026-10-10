@@ -3,6 +3,9 @@
  * 纯原生 JS，零依赖
  */
 
+// 每页条数的默认值。地址栏里等于这个值时不写出来，链接短一点
+const DEFAULT_LIMIT = 20;
+
 // ── 全局状态 ──────────────────────────
 const state = {
   currentMode: 'search',   // 'search' | 'type' | 'top'
@@ -10,8 +13,128 @@ const state = {
   currentStat: 'HP',
   topN: 20,
   offset: 0,               // 当前页从第几条开始（只对 search / type 有意义）
-  limit: 20,               // 每页条数
+  limit: DEFAULT_LIMIT,    // 每页条数
 };
+
+// ── 地址栏同步 ────────────────────────
+//
+// 状态写进 query string：/?type=电&page=2
+//
+// 为什么不加 /pokedex 这样的路径段：这个应用只有**一个**页面，那个路径会
+// 暗示还有 /items 之类的兄弟路由，而它们并不存在。而且用根路径不需要改服务端
+// —— /pokedex 现在会 404，得再加一条 SPA catch-all 路由。
+//
+// 为什么不做「精确恢复滚动位置」：那需要知道到底是视口还是 .content 在滚，
+// 而 scrollToResults 用 scrollIntoView 正是为了绕开这个问题。浏览器对同文档
+// 的历史导航本来就会尝试恢复滚动，够用了。
+
+/** 从地址栏读视图状态。没有可用的参数就返回 null（表示「空页面」） */
+function readUrlState() {
+  const params = new URLSearchParams(window.location.search);
+
+  // 用真值判断而不是 has()：?q= 这种空参数不该当成一次搜索
+  // （接口有 min_length=1，会回 422）
+  const query = params.get('q');
+  const type = params.get('type');
+  const stat = params.get('stat');
+
+  const limit = Number(params.get('limit')) > 0
+    ? Number(params.get('limit')) : DEFAULT_LIMIT;
+  const page = Number(params.get('page')) > 0 ? Number(params.get('page')) : 1;
+  const offset = (page - 1) * limit;
+
+  if (query) return { mode: 'search', query, limit, offset };
+  if (type) return { mode: 'type', query: type, limit, offset };
+  if (stat) {
+    return {
+      mode: 'top',
+      stat,
+      topN: Number(params.get('n')) > 0 ? Number(params.get('n')) : state.topN,
+      limit,
+      offset,
+    };
+  }
+  return null;
+}
+
+/** 把当前状态写进地址栏。用 pushState —— 前进/后退要能走 */
+function syncUrl() {
+  const params = new URLSearchParams();
+
+  if (state.currentMode === 'search') {
+    params.set('q', state.currentQuery);
+  } else if (state.currentMode === 'type') {
+    params.set('type', state.currentQuery);
+  } else if (state.currentMode === 'top') {
+    params.set('stat', state.currentStat);
+    params.set('n', String(state.topN));
+  }
+
+  if (state.currentMode !== 'top') {
+    const page = Math.floor(state.offset / state.limit) + 1;
+    if (page > 1) params.set('page', String(page));
+    if (state.limit !== DEFAULT_LIMIT) params.set('limit', String(state.limit));
+  }
+
+  const query = params.toString();
+  window.history.pushState({}, '',
+                           query ? `${window.location.pathname}?${query}`
+                                 : window.location.pathname);
+}
+
+/** 回到「还没查询」的样子。历史退回一个没有参数的地址时用 */
+function showWelcome() {
+  state.currentMode = 'search';
+  state.currentQuery = '';
+  state.offset = 0;
+  clearHighlights();
+
+  hideLoading();
+  resultTitle.textContent = '欢迎使用精灵图鉴';
+  resultCount.textContent = '';
+  resultTable.classList.add('hidden');
+  pager.classList.add('hidden');
+  effectPanel.classList.add('hidden');
+
+  emptyState.classList.remove('hidden');
+  // showError() 会改写这个 <p>，所以回欢迎页时得写回来
+  emptyState.querySelector('p').textContent = '输入精灵名称开始搜索';
+}
+
+/**
+ * 按地址栏里的状态把界面渲染出来。
+ *
+ * 只用于**恢复**场景 —— 首次带参数打开、以及前进/后退 —— 所以固定走
+ * navigate: false：不滚、也不往历史里再塞一条（那会把前进/后退搅乱）。
+ *
+ * 返回是否恢复了内容；地址栏干净时返回 false，调用方据此知道该停留在
+ * 欢迎页。
+ */
+async function applyUrlState() {
+  const restored = readUrlState();
+
+  if (!restored) {
+    showWelcome();
+    return false;
+  }
+
+  state.limit = restored.limit;
+  state.offset = restored.offset;
+  state.currentMode = restored.mode;
+
+  if (restored.mode === 'top') {
+    state.currentStat = restored.stat;
+    state.topN = restored.topN;
+    highlightStat();
+    await loadTopN(restored.stat, restored.topN, { navigate: false });
+  } else {
+    state.currentQuery = restored.query;
+    if (restored.mode === 'type') highlightType();
+    else clearHighlights();
+    await loadPage(restored.offset, { navigate: false });
+  }
+  return true;
+}
 
 // ── DOM 引用 ──────────────────────────
 const $ = (sel) => document.querySelector(sel);
@@ -76,6 +199,13 @@ async function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
   });
+
+  // 前进 / 后退：按地址栏重放一次（不滚、不写历史，见 applyUrlState）
+  window.addEventListener('popstate', applyUrlState);
+
+  // 地址栏里带了状态就直接渲染出来 —— 刷新、以及别人分享过来的链接
+  await applyUrlState();
+  pageSize.value = String(state.limit);   // 地址栏写了 limit 时回填下拉框
 }
 
 async function loadTotalCount() {
@@ -166,10 +296,14 @@ function currentTitle() {
 /**
  * 加载当前查询里从第 offset 条开始的那一页。
  *
- * 搜索和属性筛选都走这里 —— 以前各 fetch 一次、各 render 一次，加翻页就得
- * 改两处，索性合成一个入口。
+ * `navigate` 区分两件事：用户主动导航，还是从地址栏恢复。
+ *   navigate=true （默认）—— 滚到结果开头，并把状态写进地址栏
+ *   navigate=false         —— 两者都不做。恢复不是导航动作：平滑滚动很怪，
+ *                             而且往历史里再塞一条会把前进/后退搅乱
+ *
+ * 搜索、属性筛选、翻页都走这里 —— 以前各 fetch 一次、各 render 一次。
  */
-async function loadPage(offset) {
+async function loadPage(offset, { navigate = true } = {}) {
   const url = queryUrl(offset);
   if (!url) return;
 
@@ -179,9 +313,9 @@ async function loadPage(offset) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || '加载失败');
     state.offset = offset;      // 成功了才记页码，失败时维持原样
-    // 滚动在 renderResults 里做，这里不要再来一次（翻页条在表格下方，
-    // 不滚的话视图会停在底部、看不到新一页的第一行）
-    renderResults(data.results, currentTitle(), data);
+    // 滚动由 renderResults 负责，这里不要再来一次
+    renderResults(data.results, currentTitle(), data, { scroll: navigate });
+    if (navigate) syncUrl();
   } catch (e) {
     showError(e.message || '加载失败');
   }
@@ -205,16 +339,20 @@ function selectType(element) {
   loadPage(0);
 }
 
-async function loadTopN(stat, n) {
+async function loadTopN(stat, n, { navigate = true } = {}) {
   showLoading();
   try {
     const res = await fetch(`/api/monsters/top?stat=${stat}&n=${n}`);
     const data = await res.json();
+    // 地址栏能带 ?stat=... 进来，所以「排序字段非法」这条错误路径是真的可达
+    if (!res.ok) throw new Error(data.detail || '加载失败');
     // Top N 不是分页，就是「前 N 名」，所以总数和显示数相同
     renderResults(data.results, `${data.label} Top ${n}`,
-                  { total: data.count, shown: data.count });
-  } catch {
-    showError('加载失败');
+                  { total: data.count, shown: data.count },
+                  { scroll: navigate });
+    if (navigate) syncUrl();
+  } catch (e) {
+    showError(e.message || '加载失败');
   }
 }
 
@@ -328,9 +466,12 @@ function renderPager(meta) {
   nextPage.disabled = state.offset + shown >= total;
 }
 
-// 渲染完都会把视图滚到结果栏。放在这个函数里而不是各调用方，是为了不漏 ——
+// 渲染完默认会把视图滚到结果栏。放在这个函数里而不是各调用方，是为了不漏 ——
 // 搜索、属性筛选、能力排行都走这里，将来多一种结果也一样覆盖。
-function renderResults(results, title, meta) {
+//
+// scroll=false 用于「从地址栏恢复」（首次带参数打开、前进/后退）：那不是导航
+// 动作，不该动视图，让浏览器自己的滚动恢复生效就行。
+function renderResults(results, title, meta, { scroll = true } = {}) {
   hideLoading();
   emptyState.classList.add('hidden');
   effectPanel.classList.add('hidden');
@@ -342,7 +483,7 @@ function renderResults(results, title, meta) {
     pager.classList.add('hidden');
     emptyState.classList.remove('hidden');
     emptyState.querySelector('p').textContent = '没有找到匹配的精灵';
-    scrollToResults();
+    if (scroll) scrollToResults();
     return;
   }
 
@@ -366,7 +507,7 @@ function renderResults(results, title, meta) {
     </tr>
   `).join('');
 
-  scrollToResults();
+  if (scroll) scrollToResults();
 }
 
 // ── 弹窗 ──────────────────────────
