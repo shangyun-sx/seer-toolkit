@@ -179,9 +179,9 @@ async function loadPage(offset) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || '加载失败');
     state.offset = offset;      // 成功了才记页码，失败时维持原样
+    // 滚动在 renderResults 里做，这里不要再来一次（翻页条在表格下方，
+    // 不滚的话视图会停在底部、看不到新一页的第一行）
     renderResults(data.results, currentTitle(), data);
-    // 翻页条在表格下方：不滚的话视图停在底部，看不到新一页的第一行
-    scrollToResults();
   } catch (e) {
     showError(e.message || '加载失败');
   }
@@ -328,6 +328,8 @@ function renderPager(meta) {
   nextPage.disabled = state.offset + shown >= total;
 }
 
+// 渲染完都会把视图滚到结果栏。放在这个函数里而不是各调用方，是为了不漏 ——
+// 搜索、属性筛选、能力排行都走这里，将来多一种结果也一样覆盖。
 function renderResults(results, title, meta) {
   hideLoading();
   emptyState.classList.add('hidden');
@@ -340,6 +342,7 @@ function renderResults(results, title, meta) {
     pager.classList.add('hidden');
     emptyState.classList.remove('hidden');
     emptyState.querySelector('p').textContent = '没有找到匹配的精灵';
+    scrollToResults();
     return;
   }
 
@@ -362,6 +365,8 @@ function renderResults(results, title, meta) {
       <td>${r.Total ?? '-'}</td>
     </tr>
   `).join('');
+
+  scrollToResults();
 }
 
 // ── 弹窗 ──────────────────────────
@@ -477,7 +482,10 @@ function closeModal() {
  */
 function scrollToResults({ smooth = true } = {}) {
   const anchor = $('#resultBar');
-  if (!anchor || resultTable.classList.contains('hidden')) return;
+  // 没有「结果为空就不滚」这种判断 —— 锚是结果栏，它**永远**有意义
+  // （总写着标题和条数）。而且 0 条时恰恰最该滚过去：那句「无结果」就在
+  // 结果栏上，不滚的话用户还盯着上一次的内容。
+  if (!anchor) return;
 
   // 系统里勾了「减少动态效果」就别做平滑滚动
   const reduceMotion =
