@@ -31,10 +31,9 @@ jobs:
         run: ruff check .
       - name: mypy 类型检查
         run: mypy .
-      # 前端 400 多行 JS 没有任何测试，这里至少保证它语法是通的
-      # （ubuntu 的 runner 自带 node）
-      - name: 检查前端 JS 语法
-        run: node --check web/static/app.js
+      # 前端逻辑测试也走 pytest（tests/test_frontend.py 里包了一层跑 node），
+      # 所以这里不用单独加步骤 —— 出口只有一个。app.js 语法有问题的话，
+      # 那个测试会因为加载不了而失败
 
   test:
     name: 测试 (Python ${{ matrix.python-version }})
