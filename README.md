@@ -61,7 +61,7 @@ seer-toolkit/
 │   ├── template_match.py     #   OpenCV 模板匹配核心
 │   └── auto_click.py         #   自动点击 (截屏->匹配->点击)
 │
-├── tests/                     # 测试（169 项，全部离线，不需要游戏数据）
+├── tests/                     # 测试（177 项，全部离线，不需要游戏数据）
 │   ├── test_pokedex.py       #   28 项  图鉴（含并发、分页、SQL 注入）
 │   ├── test_effects.py       #   27 项  技能效果解析
 │   ├── test_type_chart.py    #   22 项  属性克制
@@ -72,8 +72,13 @@ seer-toolkit/
 │   ├── test_account_manager.py # 11 项 账号与任务
 │   ├── test_web_api.py       #   10 项  Web API
 │   ├── test_render.py        #    9 项  命令行排版
+│   ├── test_connections.py   #    7 项  sqlite 连接（含 PRAGMA 调优）
 │   ├── test_integrity.py     #    6 项  MD5 校验
-│   └── test_template_match.py #   2 项  合成图像匹配
+│   ├── test_template_match.py #   2 项  合成图像匹配
+│   ├── test_frontend.py      #    1 项  跑下面的 frontend_dom.mjs
+│   ├── frontend_dom.mjs      #   前端逻辑 45 条断言（node + 最小 DOM 桩）
+│   └── test_real_data.py     #    5 项  对真实数据的 schema / 域值检查
+│                             #        （没真表时自动跳过，见「运行测试」）
 │
 └── data/                      # 游戏本地数据库 (需自行提供)
                                # 已被 .gitignore 排除，不会上传
@@ -335,7 +340,7 @@ curl "/api/monsters/search?q=雷伊&fields=DefName,Total"
 ## 运行测试
 
 ```bash
-# 一行跑全部（169 项，全部离线，不需要游戏数据）
+# 一行跑全部（177 项，全部离线，不需要游戏数据）
 python -m pytest tests/ -q
 
 # 带覆盖率（门槛 80%，配在 pyproject.toml 的 [tool.coverage.report]）
@@ -352,24 +357,54 @@ python tests/test_attributes.py        # 12 项 六维属性
 python tests/test_account_manager.py   # 11 项 账号与任务
 python tests/test_web_api.py           # 10 项 Web API
 python tests/test_render.py            #  9 项 命令行排版
+python tests/test_connections.py       #  7 项 sqlite 连接管理
 python tests/test_integrity.py         #  6 项 MD5 校验
 python tests/test_template_match.py    #  2 项 合成图像匹配
-
-# 需要真实游戏数据库的检查（data/ 被 gitignore，所以不进 pytest）
-python tests/test_pokedex.py /path/to/雷小伊目录
-python tests/test_effects.py /path/to/雷小伊目录
+python tests/test_frontend.py          #  1 项 前端逻辑（见下）
 ```
 
-静态检查（CI 上这三道一起跑）：
+前端逻辑测试（`tests/frontend_dom.mjs`，45 条断言）跑在 node 上，用最小 DOM 桩
+加载 `app.js` 驱动纯逻辑：转义、分页计算、URL 拼装、滚动策略、请求竞态。
+**不引入 npm** —— `tests/test_frontend.py` 用 pytest 包了一层，所以
+`pytest tests/` 就覆盖了它，CI 不用加步骤。没装 node 会自动跳过。
+
+静态检查：
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
 pip install ruff mypy
 
-ruff check .                      # 风格与常见错误
-mypy .                            # 类型检查
-node --check web/static/app.js    # 前端 400 多行 JS 至少保证语法是通的
+ruff check .      # 风格与常见错误
+mypy .            # 类型检查
 ```
+
+### 游戏数据更新之后
+
+`data/` 是游戏自己的库，游戏更新时它的 schema 可能变。**每次换上新的 `data/`
+之后跑一次**：
+
+```bash
+python -m pytest tests/test_real_data.py -v
+```
+
+它查两件**不同**的事，故意分成两组、不合并 —— 因为失效模式不一样：
+
+| | 查什么 | 变了会怎样 |
+|---|---|---|
+| **schema 快照** | 代码要读的列还在不在 | 运行时 `no such column`，响亮 |
+| **域值断言** | 列的**含义**还是不是代码假设的那个 | **静默出错**：列名类型都没变，数据换了意思 |
+
+合并成一个 check 的话，红了只知道「游戏数据变了」，不知道动哪儿。
+
+CI 上它自动跳过（`data/` 不在仓库里），所以 **CI 配置不用管它**；哪天数据进了
+CI，它会自动生效。
+
+**红了怎么办**：第一动作**不是更新那份清单**，而是先看离线测试里的**假表**
+（`tests/test_pokedex.py` 的 `_make_fake_db`）要不要跟着改 —— 假表不跟着改的话，
+离线测试会继续绿，但测的已经不是真表了。
+
+有一条**故意不查**：`ID < 15000 算皮肤` 那个阈值。为什么不做自动检查，写在
+`tests/test_real_data.py` 的模块注释里。
 
 ## 涉及的技术点
 
