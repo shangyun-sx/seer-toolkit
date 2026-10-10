@@ -77,9 +77,14 @@ function syncUrl() {
   }
 
   const query = params.toString();
-  window.history.pushState({}, '',
-                           query ? `${window.location.pathname}?${query}`
-                                 : window.location.pathname);
+  const target = query ? `${window.location.pathname}?${query}`
+                       : window.location.pathname;
+
+  // 地址没变就别再入栈。点两下同一个属性标签会走到这里 —— 留两条一样的
+  // 记录，按一次后退看起来「毫无反应」，像是坏了。
+  if (target === window.location.pathname + window.location.search) return;
+
+  window.history.pushState({}, '', target);
 }
 
 /** 回到「还没查询」的样子。历史退回一个没有参数的地址时用 */
