@@ -107,13 +107,10 @@ function showWelcome() {
   clearHighlights();
 
   hideLoading();
+  setMainView({ message: true });
+
   resultTitle.textContent = '欢迎使用精灵图鉴';
   resultCount.textContent = '';
-  resultTable.classList.add('hidden');
-  pager.classList.add('hidden');
-  effectPanel.classList.add('hidden');
-
-  emptyState.classList.remove('hidden');
   // showError() 会改写这个 <p>，所以回欢迎页时得写回来
   emptyState.querySelector('p').textContent = '输入精灵名称开始搜索';
 }
@@ -414,16 +411,11 @@ function renderEffectRows(groups) {
 
 function renderEffectPanel(data) {
   hideLoading();
-  emptyState.classList.add('hidden');
-  resultTable.classList.add('hidden');
-  // 翻页条属于「表格视图」。这里换成克制面板了，它还留在原地的话，
-  // 会显示上一份结果的页码 —— 而那份结果已经不在屏幕上了。
-  pager.classList.add('hidden');
+  setMainView({ effect: true });
 
   resultTitle.textContent = `${data.element} 系属性克制`;
   resultCount.textContent = '';
 
-  effectPanel.classList.remove('hidden');
   effectPanel.innerHTML = `
     <div class="effect-group">
       <h3>用 ${esc(data.element)} 系技能攻击</h3>
@@ -498,24 +490,19 @@ function renderPager(meta) {
 // 动作，不该动视图，让浏览器自己的滚动恢复生效就行。
 function renderResults(results, title, meta, { scroll = true } = {}) {
   hideLoading();
-  emptyState.classList.add('hidden');
-  effectPanel.classList.add('hidden');
+  resultTitle.textContent = title;
 
   if (!results || results.length === 0) {
-    resultTitle.textContent = title;
+    setMainView({ message: true });
     resultCount.textContent = '无结果';
-    resultTable.classList.add('hidden');
-    pager.classList.add('hidden');
-    emptyState.classList.remove('hidden');
     emptyState.querySelector('p').textContent = '没有找到匹配的精灵';
     if (scroll) scrollToResults();
     return;
   }
 
-  resultTitle.textContent = title;
+  setMainView({ table: true });
   resultCount.textContent = formatCount(meta);
-  resultTable.classList.remove('hidden');
-  renderPager(meta);
+  renderPager(meta);          // 必须在 setMainView 之后 —— 见它的注释
 
   tableBody.innerHTML = results.map(r => `
     <tr onclick="showDetail(${r.ID})" title="点击查看详情">
@@ -663,11 +650,45 @@ function scrollToResults({ smooth = true } = {}) {
   });
 }
 
+/**
+ * 设置主视图区显示哪一块。**这块区域的显隐只有一个地方回答。**
+ *
+ * 以前是五个函数各自手动 toggle（showWelcome / renderEffectPanel /
+ * renderResults / showLoading / showError），而它们当中三个漏了 pager ——
+ * 那不是偶然，是结构在鼓励这个错误。
+ *
+ * 四个区域里只有三个是参数：**翻页条从 table 派生，不是参数**。
+ * 「翻页条可见」蕴含「表格可见」是一条不变式；做成参数就等于允许调用方填错，
+ * 而错的这几次全是漏了它。派生让它不可能填错。
+ *
+ * —— 和 renderPager() 的分工（两者之间唯一的隐式契约，写在这里）——
+ *
+ *   * 表格可见时：这里**不碰** pager，交给 renderPager() 决定
+ *     （多于一页才显示、只有一页就藏）
+ *   * 表格不可见时：这里强制隐藏，且**此时不该再调 renderPager()**
+ *
+ * 所以调用顺序必须是 `setMainView({table: true})` → `renderPager(meta)`。
+ * 反过来、或者无条件调 renderPager，会把这里的隐藏覆盖掉。
+ *
+ * —— 关于参数名 ——
+ *
+ * 用 `message` 而不是 `welcome`：这块区域既当欢迎页、又当「没有结果」、
+ * 还当错误提示（showError 也用同一个容器）。叫 welcome 会盖掉后两个角色。
+ * DOM 那边仍叫 `#emptyState`（改名要动 index.html 和 CSS，没有功能收益）——
+ * 这里的名字描述的是「哪块区域」，不是「当前是哪个视图」。
+ */
+function setMainView({ table = false, effect = false, message = false } = {}) {
+  resultTable.classList.toggle('hidden', !table);
+  effectPanel.classList.toggle('hidden', !effect);
+  emptyState.classList.toggle('hidden', !message);
+
+  // 见上面和 renderPager 的分工说明
+  if (!table) pager.classList.add('hidden');
+}
+
 function showLoading() {
+  setMainView();                                  // 主视图整块收起
   loadingEl.classList.remove('hidden');
-  resultTable.classList.add('hidden');
-  emptyState.classList.add('hidden');
-  effectPanel.classList.add('hidden');
 }
 
 function hideLoading() {
@@ -676,13 +697,7 @@ function hideLoading() {
 
 function showError(msg) {
   hideLoading();
-  effectPanel.classList.add('hidden');
-  // 这两行是「自给自足」的补丁：今天所有调用点前面都跑过 showLoading()，
-  // 它顺手把表格和翻页条藏了，所以缺了这两行也看不出问题 —— 但那是靠调用
-  // 顺序兜着。新加一个不先 showLoading 的调用点，表格就会和错误信息同屏。
-  resultTable.classList.add('hidden');
-  pager.classList.add('hidden');
-  emptyState.classList.remove('hidden');
+  setMainView({ message: true });
   emptyState.querySelector('p').textContent = msg;
 }
 

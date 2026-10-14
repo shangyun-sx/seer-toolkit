@@ -89,7 +89,7 @@ vm.runInThisContext(
   source + '\n;globalThis.__exports = {'
   + 'esc, formatCount, renderPager, queryUrl, scrollToResults,'
   + 'readUrlState, syncUrl, renderResults, loadPage, loadTopN,'
-  + 'renderEffectPanel, showError, state, $'
+  + 'renderEffectPanel, showError, showWelcome, showLoading, state, $'
   + '};',
 );
 
@@ -176,43 +176,69 @@ app.state.currentMode = 'top';
 app.renderPager({ total: 999, shown: 20 });
 check('Top N 不显示翻页条', pager.classList.contains('hidden'), true);
 
-// ── 主视图区域的显隐 ────────────────────────
+// ── 主视图显隐矩阵 ──────────────────────────
 
-section('主视图区域的显隐：翻页条不该残留在非表格视图里');
+section('主视图显隐矩阵：每个视图 × 每个区域');
 //
-// 背景：有**五个**函数在各自手动管这组显隐（showWelcome / renderEffectPanel /
-// renderResults / showLoading / showError），其中三个漏过 pager。
+// 把「每个视图下每个区域该是什么状态」写成一张**可枚举的完整表**，而不是钉
+// 几个单点 —— 加第五种视图时，漏掉哪个区域一眼就能看出来。
 //
-// 这里只钉「结果看得见的行为」，不钉实现 —— 将来真把它们收拢成一个函数，
-// 这些断言应该原样通过。
+// 背景：这组显隐以前散在五个函数里手动 toggle，其中三个漏了 pager。现在收拢
+// 到 setMainView()，而且 pager 是从 table **派生**的（表格不在就强制收起），
+// 所以「忘掉 pager」这条路径已经不存在了。
 
-const tableEl = app.$('#resultTable');
-const pagerVisible = () => !pager.classList.contains('hidden');
+const REGIONS = {
+  resultTable: app.$('#resultTable'),
+  effectPanel: app.$('#effectPanel'),
+  emptyState: app.$('#emptyState'),
+  pager: app.$('#pager'),
+};
+const isHidden = (name) => REGIONS[name].classList.contains('hidden');
 
-function showTable() {
-  app.state.currentMode = 'search';
-  app.state.limit = 20;
-  app.state.offset = 0;
-  app.renderResults([SAMPLE], 't', { total: 130, shown: 20 });
-}
-
-showTable();
-check('前提：表格视图里翻页条是亮的', pagerVisible(), true);
-
-app.renderEffectPanel({
+const EFFECT_DATA = {
   element: '火',
   offense: { strong: [], weak: [], immune: [] },
   defense: { weaknesses: [], resistances: [], immunities: [] },
-});
-check('属性克制视图：翻页条收起', pagerVisible(), false);
-check('属性克制视图：结果表格收起', tableEl.classList.contains('hidden'), true);
+};
 
-showTable();
-check('切回表格：翻页条又亮了', pagerVisible(), true);
+function searchResults(total) {
+  app.state.currentMode = 'search';
+  app.state.limit = 20;
+  app.state.offset = 0;
+  app.renderResults([SAMPLE], '搜索', { total, shown: 20 });
+}
 
-app.showError('出错了');
-check('错误视图：翻页条收起', pagerVisible(), false);
-check('错误视图：结果表格收起', tableEl.classList.contains('hidden'), true);
+// hidden: true 表示该区域**应当**收起
+const VIEWS = [
+  { name: '表格（多于一页）', enter: () => searchResults(130),
+    hidden: { resultTable: false, effectPanel: true, emptyState: true, pager: false } },
+  { name: '表格（只有一页）', enter: () => searchResults(1),
+    hidden: { resultTable: false, effectPanel: true, emptyState: true, pager: true } },
+  { name: '克制面板', enter: () => app.renderEffectPanel(EFFECT_DATA),
+    hidden: { resultTable: true, effectPanel: false, emptyState: true, pager: true } },
+  { name: '文案：欢迎页', enter: () => app.showWelcome(),
+    hidden: { resultTable: true, effectPanel: true, emptyState: false, pager: true } },
+  { name: '文案：无结果', enter: () => app.renderResults([], '搜索', { total: 0, shown: 0 }),
+    hidden: { resultTable: true, effectPanel: true, emptyState: false, pager: true } },
+  { name: '文案：出错', enter: () => app.showError('出错了'),
+    hidden: { resultTable: true, effectPanel: true, emptyState: false, pager: true } },
+  { name: '加载中', enter: () => app.showLoading(),
+    hidden: { resultTable: true, effectPanel: true, emptyState: true, pager: true } },
+];
+
+for (const view of VIEWS) {
+  // 每个视图都从**同一个基线**进入：一份「多于一页」的结果，翻页条是亮的。
+  //
+  // 不重置的话，某个视图「忘了收起翻页条」会被上一个视图留下的状态盖住 ——
+  // 这一版之前就是这么写的，于是矩阵对着有 bug 的代码照样全绿，白写了一整张表。
+  searchResults(130);
+
+  view.enter();
+  for (const region of Object.keys(REGIONS)) {
+    check(`${view.name} → ${region} ${view.hidden[region] ? '收起' : '显示'}`,
+          isHidden(region), view.hidden[region]);
+  }
+}
 
 // ── URL 拼装 ────────────────────────────────
 
