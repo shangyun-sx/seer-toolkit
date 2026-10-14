@@ -88,7 +88,8 @@ const source = fs.readFileSync(APP_JS, 'utf8');
 vm.runInThisContext(
   source + '\n;globalThis.__exports = {'
   + 'esc, formatCount, renderPager, queryUrl, scrollToResults,'
-  + 'readUrlState, syncUrl, renderResults, loadPage, loadTopN, state, $'
+  + 'readUrlState, syncUrl, renderResults, loadPage, loadTopN,'
+  + 'renderEffectPanel, showError, state, $'
   + '};',
 );
 
@@ -174,6 +175,44 @@ check('只有一页：翻页条隐藏', pager.classList.contains('hidden'), true
 app.state.currentMode = 'top';
 app.renderPager({ total: 999, shown: 20 });
 check('Top N 不显示翻页条', pager.classList.contains('hidden'), true);
+
+// ── 主视图区域的显隐 ────────────────────────
+
+section('主视图区域的显隐：翻页条不该残留在非表格视图里');
+//
+// 背景：有**五个**函数在各自手动管这组显隐（showWelcome / renderEffectPanel /
+// renderResults / showLoading / showError），其中三个漏过 pager。
+//
+// 这里只钉「结果看得见的行为」，不钉实现 —— 将来真把它们收拢成一个函数，
+// 这些断言应该原样通过。
+
+const tableEl = app.$('#resultTable');
+const pagerVisible = () => !pager.classList.contains('hidden');
+
+function showTable() {
+  app.state.currentMode = 'search';
+  app.state.limit = 20;
+  app.state.offset = 0;
+  app.renderResults([SAMPLE], 't', { total: 130, shown: 20 });
+}
+
+showTable();
+check('前提：表格视图里翻页条是亮的', pagerVisible(), true);
+
+app.renderEffectPanel({
+  element: '火',
+  offense: { strong: [], weak: [], immune: [] },
+  defense: { weaknesses: [], resistances: [], immunities: [] },
+});
+check('属性克制视图：翻页条收起', pagerVisible(), false);
+check('属性克制视图：结果表格收起', tableEl.classList.contains('hidden'), true);
+
+showTable();
+check('切回表格：翻页条又亮了', pagerVisible(), true);
+
+app.showError('出错了');
+check('错误视图：翻页条收起', pagerVisible(), false);
+check('错误视图：结果表格收起', tableEl.classList.contains('hidden'), true);
 
 // ── URL 拼装 ────────────────────────────────
 

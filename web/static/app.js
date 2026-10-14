@@ -416,6 +416,9 @@ function renderEffectPanel(data) {
   hideLoading();
   emptyState.classList.add('hidden');
   resultTable.classList.add('hidden');
+  // 翻页条属于「表格视图」。这里换成克制面板了，它还留在原地的话，
+  // 会显示上一份结果的页码 —— 而那份结果已经不在屏幕上了。
+  pager.classList.add('hidden');
 
   resultTitle.textContent = `${data.element} 系属性克制`;
   resultCount.textContent = '';
@@ -674,6 +677,11 @@ function hideLoading() {
 function showError(msg) {
   hideLoading();
   effectPanel.classList.add('hidden');
+  // 这两行是「自给自足」的补丁：今天所有调用点前面都跑过 showLoading()，
+  // 它顺手把表格和翻页条藏了，所以缺了这两行也看不出问题 —— 但那是靠调用
+  // 顺序兜着。新加一个不先 showLoading 的调用点，表格就会和错误信息同屏。
+  resultTable.classList.add('hidden');
+  pager.classList.add('hidden');
   emptyState.classList.remove('hidden');
   emptyState.querySelector('p').textContent = msg;
 }
